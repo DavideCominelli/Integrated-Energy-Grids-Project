@@ -59,3 +59,28 @@ def load_wind(date='2024-01-01'):
         print(df)
         wind_data[plant_key] = df
     return wind_data
+
+# demand data
+def load_consumption_data(filepath='data/ConsumptionConsumerCategoryHour.csv'):
+    """Load and process consumption data from CSV file.
+    
+    Args:
+        filepath (str): Path to the consumption CSV file
+        
+    Returns:
+        pd.DataFrame: Hourly aggregated consumption data with DateTime and ConsumptionMWh columns
+    """
+    df = pd.read_csv(filepath, sep=';')
+    df['DateTime'] = pd.to_datetime(df['TimeUTC'])
+
+    df['ConsumptionkWh'] = pd.to_numeric(
+        df['ConsumptionkWh'].astype(str).str.replace(',', '.').str.strip(), 
+        errors='coerce')
+
+    df['ConsumptionkWh'] = df['ConsumptionkWh'].fillna(0)
+    df['ConsumptionMWh'] = df['ConsumptionkWh'] / 1000
+    
+    # aggregate consumption by date-time in hourly resolution
+    df_hourly = df.groupby('DateTime')['ConsumptionMWh'].sum().reset_index()
+    
+    return df_hourly
