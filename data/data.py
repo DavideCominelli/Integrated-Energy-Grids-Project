@@ -1,10 +1,10 @@
-#%%
 import pandas as pd
 import os
+import sys
 
-
-#%%
-# The system consist of 12 conventional power plants and 6 wind power plants
+# Add parent directory to path to import utils
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils import startdate_enddate, missing_data, fill_missing_data, clean_outliers
 
 # Unit costs for conventional power plants, The unit cost for wind power plants is 0.
 unit_cost_G = {
@@ -60,8 +60,33 @@ def load_wind(date='2024-01-01'):
         wind_data[plant_key] = df
     return wind_data
 
-# demand data
-def load_consumption_data(filepath='data/ConsumptionConsumerCategoryHour.csv'):
+# # demand data
+# def load_consumption_data(filepath='data/ConsumptionConsumerCategoryHour.csv'):
+#     """Load and process consumption data from CSV file.
+    
+#     Args:
+#         filepath (str): Path to the consumption CSV file
+        
+#     Returns:
+#         pd.DataFrame: Hourly aggregated consumption data with DateTime and ConsumptionMWh columns
+#     """
+#     df = pd.read_csv(filepath, sep=';')
+#     df['DateTime'] = pd.to_datetime(df['TimeUTC'])
+
+#     df['ConsumptionkWh'] = pd.to_numeric(
+#         df['ConsumptionkWh'].astype(str).str.replace(',', '.').str.strip(), 
+#         errors='coerce')
+
+#     df['ConsumptionkWh'] = df['ConsumptionkWh'].fillna(0)
+#     df['ConsumptionMWh'] = df['ConsumptionkWh'] / 1000
+    
+#     # aggregate consumption by date-time in hourly resolution
+#     df_hourly = df.groupby('DateTime')['ConsumptionMWh'].sum().reset_index()
+    
+#     return df_hourly
+
+
+def load_raw_consumption_data(filepath='data/monthly_hourly_load_values_2024.csv'):
     """Load and process consumption data from CSV file.
     
     Args:
@@ -70,17 +95,39 @@ def load_consumption_data(filepath='data/ConsumptionConsumerCategoryHour.csv'):
     Returns:
         pd.DataFrame: Hourly aggregated consumption data with DateTime and ConsumptionMWh columns
     """
-    df = pd.read_csv(filepath, sep=';')
-    df['DateTime'] = pd.to_datetime(df['TimeUTC'])
-
-    df['ConsumptionkWh'] = pd.to_numeric(
-        df['ConsumptionkWh'].astype(str).str.replace(',', '.').str.strip(), 
-        errors='coerce')
-
-    df['ConsumptionkWh'] = df['ConsumptionkWh'].fillna(0)
-    df['ConsumptionMWh'] = df['ConsumptionkWh'] / 1000
+    df = pd.read_csv(filepath, sep='\t')
     
-    # aggregate consumption by date-time in hourly resolution
+    # Parse the DateTime from the DateUTC column
+    df['DateTime'] = pd.to_datetime(df['DateUTC'], format='%d-%m-%Y %H:%M')
+
+    # Convert Value to numeric
+    df['Value'] = pd.to_numeric(
+        df['Value'].astype(str).str.replace(',', '.').str.strip(), 
+        errors='coerce')
+    df = df[df['CountryCode'] == 'DK']  # Filter for Denmark only
+    df['Value'] = df['Value'].fillna(0)
+    df['ConsumptionMWh'] = df['Value']
+    
+    # Aggregate consumption by date-time in hourly resolution (sum across all countries)
     df_hourly = df.groupby('DateTime')['ConsumptionMWh'].sum().reset_index()
     
     return df_hourly
+
+def preprocessing_consumption_data(df):
+    """Preprocess the consumption data by identifying and filling missing hours.
+    
+    Args:
+        df (pd.DataFrame): DataFrame with DateTime and ConsumptionMWh columns
+        
+    Returns:
+        pd.DataFrame: DataFrame with missing hours filled
+        pd.DatetimeIndex: DatetimeIndex of missing hours that were filled
+    """
+    start_date, end_date = startdate_enddate(df)
+    missing_hours = missing_data(df, start_date, end_date)
+    print(f"Missing hours in the demand data: {missing_hours}")
+    
+    df_filled = fill_missing_data(df, missing_hours)
+    df_cleaned = clean_outliers(df_filled)
+    
+    return df_cleaned

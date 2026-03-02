@@ -2,8 +2,8 @@
 import pandas as pd
 import pypsa
 import logging
-from data.data import load_wind, load_consumption_data
-
+from data.data import load_wind, preprocessing_consumption_data, load_raw_consumption_data
+from plots import plot_demand
 #%%
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -15,8 +15,11 @@ costs = pd.read_csv(url, index_col=[0, 1])
 #%%
 # input data for the network
 logging.info("Loading consumptiondata...")
-df_demand = load_consumption_data()
+df_demand = preprocessing_consumption_data(load_raw_consumption_data())
+plot_demand(df_demand)
 
+
+#%%
 logging.info("Loading wind data...")
 wind_data = load_wind()
 
@@ -26,6 +29,11 @@ n = pypsa.Network()
 hours_in_2024 = pd.date_range('2024-01-01 00:00Z',
                               '2024-12-31 23:00Z',
                               freq='h')
+
+
+n.add("Bus",
+            "electricity")
+
 n.set_snapshots(hours_in_2024.values)
 
 carriers = [
