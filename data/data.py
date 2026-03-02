@@ -4,6 +4,7 @@ import sys
 
 # Add parent directory to path to import utils
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from plots import plot_demand
 from utils import startdate_enddate, missing_data, fill_missing_data, clean_outliers
 
 # Unit costs for conventional power plants, The unit cost for wind power plants is 0.
@@ -56,7 +57,6 @@ def load_wind(date='2024-01-01'):
         df = pd.read_csv(file_path, skiprows=3)
         df['date'] = pd.to_datetime(df['time']).dt.date
         df['electricity'] = df['electricity']/1000
-        print(df)
         wind_data[plant_key] = df
     return wind_data
 
@@ -128,6 +128,11 @@ def preprocessing_consumption_data(df):
     print(f"Missing hours in the demand data: {missing_hours}")
     
     df_filled = fill_missing_data(df, missing_hours)
+    print(f'len(df_filled): {len(df_filled)}')
     df_cleaned = clean_outliers(df_filled)
+    print(f'len(df_cleaned): {len(df_cleaned)}')
     
     return df_cleaned
+
+df_demand_raw = load_raw_consumption_data()
+df_demand = preprocessing_consumption_data(df_demand_raw)
