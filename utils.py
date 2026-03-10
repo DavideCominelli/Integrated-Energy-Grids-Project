@@ -8,7 +8,7 @@ def startdate_enddate(df):
 
 def missing_data(df, start_date, end_date):
     """Identify missing hours in the DataFrame based on a complete hourly date range"""
-    all_hours = pd.date_range(start=start_date, end=end_date, freq='H')
+    all_hours = pd.date_range(start=start_date, end=end_date, freq='h')
     missing_hours = all_hours.difference(df['DateTime'])
     return missing_hours
 
