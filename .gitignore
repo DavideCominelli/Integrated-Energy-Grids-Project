@@ -1,3 +1,15 @@
 .venv
 .DS_Store
 __pycache__/
+
+#Part B results
+model_weather_2013.lp
+model_weather_2014.lp
+model_weather_2015.lp
+model_weather_2016.lp
+model_weather_2017.lp
+
+weather_variability_capacities_by_year.csv
+weather_variability_summary_stats.csv
+weather_variability_wind_solar_by_year.csv
+weather_variability_wind_solar_summary.csv
