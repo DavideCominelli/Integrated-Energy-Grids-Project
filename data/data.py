@@ -34,5 +34,24 @@ tech_data = {
         "capital_cost_increase": 0.033,
         "fuel_cost": 21.6,
         "efficiency": 0.39,
-    }
+    },
+    # ── Storage technologies ───────────────────────────────────────────────
+    "Pumped_Hydro":{
+        "overnight_cost_power": 150000,  # €/MW
+        "overnight_cost_energy": 50000,   # €/MWh
+        "max_hours": 12,                  # energy-to-power ratio [h]
+        "lifetime": 50,
+        "capital_cost_increase": 0.01,
+        "efficiency_store": 0.8,          # charging efficiency (η_charge)
+        "efficiency_dispatch": 0.8,       # discharging efficiency (η_discharge)
+    },
+    "battery": {
+        "overnight_cost_power": 182000,   # €/MW
+        "overnight_cost_energy": 128000,  # €/MWh
+        "max_hours": 6,                   # energy-to-power ratio [h]
+        "lifetime": 15,
+        "capital_cost_increase": 0.02,
+        "efficiency_store": 0.9,          # charging efficiency  (η_charge)
+        "efficiency_dispatch": 0.9,       # discharging efficiency (η_discharge)
+    },
 }
