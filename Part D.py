@@ -565,3 +565,33 @@ plt.show()
 total_cost_interconnected = network.objective
 print(f"\n=== Total System Cost (Interconnected) ===")
 print(f"Total Cost: € {total_cost_interconnected:,.0f}")
+
+#%% 17) Extract Information for Task (e) - Manual PTDF Calculation
+print("\n=== Data Extraction for Task (e) ===")
+
+# 1. Get the first time step
+t0 = network.snapshots[0]
+print(f"First time step: {t0}")
+
+# 2. Network Topology (to build Incidence Matrix K and Reactance Matrix X)
+print("\n--- Network Topology (Lines and Reactances) ---")
+line_info = network.lines[['bus0', 'bus1', 'x']]
+print(line_info.to_string())
+
+print("\n--- List of Buses (Nodes) ---")
+print(list(network.buses.index))
+
+# 3. Nodal Imbalances (Generation - Demand) for the first time step
+# PyPSA stores the net active power injection at each bus in network.buses_t.p
+print(f"\n--- Nodal Imbalances (Net Injection) at {t0} [MW] ---")
+imbalances = network.buses_t.p.loc[t0]
+print(imbalances.round(2).to_string())
+
+# Note: The sum of these imbalances should be very close to 0 (accounting for minor numerical losses/rounding)
+print(f"Sum of imbalances: {imbalances.sum():.4f} MW")
+
+# 4. Modelled Line Flows (to check your manual math at the end)
+print(f"\n--- PyPSA Modelled Line Flows at {t0} [MW] ---")
+modelled_flows = network.lines_t.p0.loc[t0]
+print(modelled_flows.round(2).to_string())
+# %%
