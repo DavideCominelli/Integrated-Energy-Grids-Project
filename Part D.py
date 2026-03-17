@@ -561,3 +561,7 @@ plt.legend(title="Technology", bbox_to_anchor=(1.05, 1), loc='upper left')
 plt.tight_layout()
 plt.show()
 # %%
+#%% 16) Total System Cost (Interconnected)
+total_cost_interconnected = network.objective
+print(f"\n=== Total System Cost (Interconnected) ===")
+print(f"Total Cost: € {total_cost_interconnected:,.0f}")

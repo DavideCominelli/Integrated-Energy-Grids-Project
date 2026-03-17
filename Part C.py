@@ -253,3 +253,34 @@ plot_electricity_mix_storage(network)
 plot_duration_curves_storage(network)
 plot_storage_soc(network)
 # %%
+#%% 12) Renewable Curtailment and System Cost (Isolated)
+print("\n=== SYSTEM METRICS (ISOLATED) ===")
+
+# 1. Total System Cost
+total_cost_isolated = network.objective
+print(f"Total System Cost: € {total_cost_isolated:,.0f}")
+
+# 2. Renewable Curtailment
+vre_generators = ["onshorewind", "solar", "solar_rooftop"]
+
+total_available = 0
+total_dispatched = 0
+
+print("\n--- Curtailment Breakdown ---")
+for gen in vre_generators:
+    # Available energy = optimal capacity * capacity factor profile
+    available = network.generators_t.p_max_pu[gen] * network.generators.p_nom_opt[gen]
+    # Dispatched energy = what the solver actually used
+    dispatched = network.generators_t.p[gen]
+    
+    curtailed = available - dispatched
+    curtailed_sum = curtailed.sum()
+    available_sum = available.sum()
+    
+    total_available += available_sum
+    total_dispatched += dispatched.sum()
+    
+    print(f"{gen}: {curtailed_sum:,.0f} MWh curtailed ({(curtailed_sum/available_sum)*100:.2f}% of available)")
+
+total_curtailed = total_available - total_dispatched
+print(f"\nTotal VRE Curtailment: {total_curtailed:,.0f} MWh ({(total_curtailed/total_available)*100:.2f}%)")
