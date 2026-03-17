@@ -9,7 +9,15 @@ import cartopy.feature as cfeature
 from matplotlib.lines import Line2D
 
 from data.data import tech_data
-from utils import annuity
+from utils import (
+    annuity,
+    plot_dispatch_week_storage,
+    plot_electricity_mix_storage,
+    plot_duration_curves_storage,
+    calculate_capacity_factors_storage,
+    plot_storage_soc,
+)
+
 
 #%% 1) Settings
 HOME_COUNTRY = "DEU"
@@ -293,7 +301,7 @@ network.optimize(solver_name="gurobi", solver_options={"output_flag": 0})
 network.model.to_file("model_D.lp")
 print("Model saved to: model_D.lp")
 
-#%% 9) Main outputs
+#%% 9) Main outputs #unsure if i need this atm /its legacy from task C 
 print("\n=== Generator capacities [MW] ===")
 print(network.generators.p_nom_opt.sort_values(ascending=False))
 
@@ -446,4 +454,110 @@ def plot_storage_and_lines_map(network, coords, countries):
 
 # call after optimize
 plot_storage_and_lines_map(network, COORDS, COUNTRIES)
+# %% keyerror load
+#if i want to add it i need to make a new formula that does load_{c} for country
+# Representative winter and summer weeks for 2015.
+plot_dispatch_week_storage(
+    network,
+    week_start="2015-01-12 00:00:00",
+    title="Winter Dispatch (Week of 12 Jan 2015)",
+)
+
+plot_dispatch_week_storage(
+    network,
+    week_start="2015-07-13 00:00:00",
+    title="Summer Dispatch (Week of 13 Jul 2015)",
+)
+
+plot_electricity_mix_storage(network)
+plot_duration_curves_storage(network)
+plot_storage_soc(network)
+# %%
+#%% 12) Renewable Curtailment (DEU)
+print(f"\n=== Renewable Curtailment in {HOME_COUNTRY} ===")
+
+# Filter for just DEU wind and solar
+vre_generators = [f"onshorewind_{HOME_COUNTRY}", f"solar_{HOME_COUNTRY}", f"solar_rooftop_{HOME_COUNTRY}"]
+
+total_available = 0
+total_dispatched = 0
+
+for gen in vre_generators:
+    # Available energy = optimal capacity * capacity factor profile
+    available = network.generators_t.p_max_pu[gen] * network.generators.p_nom_opt[gen]
+    # Dispatched energy = what the solver actually used
+    dispatched = network.generators_t.p[gen]
+    
+    curtailed = available - dispatched
+    curtailed_sum = curtailed.sum()
+    available_sum = available.sum()
+    
+    total_available += available_sum
+    total_dispatched += dispatched.sum()
+    
+    print(f"{gen}: {curtailed_sum:,.0f} MWh curtailed ({(curtailed_sum/available_sum)*100:.2f}% of available)")
+
+total_curtailed = total_available - total_dispatched
+print(f"Total {HOME_COUNTRY} VRE Curtailment: {total_curtailed:,.0f} MWh ({(total_curtailed/total_available)*100:.2f}%)")
+
+
+
+#%% 13) Nodal Prices (Market Convergence)
+# Let's look at a winter week where congestion is likely
+winter_week = slice("2015-01-12", "2015-01-18 23:00")
+
+plt.figure(figsize=(10, 5))
+network.buses_t.marginal_price["DEU bus"].loc[winter_week].plot(label="Germany (DEU)", color="blue")
+network.buses_t.marginal_price["CZE bus"].loc[winter_week].plot(label="Czechia (CZE)", color="orange")
+
+plt.title("Wholesale Electricity Prices: Germany vs Czechia (Winter Week)")
+plt.ylabel("Price (€ / MWh)")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+#%% 14) Import/Export Duration Curve for DEU
+# Sort the net imports from highest (max import) to lowest (max export)
+sorted_imports = home_net_import_ts.sort_values(ascending=False).values
+
+plt.figure(figsize=(10, 5))
+plt.plot(sorted_imports, color="purple", linewidth=2)
+plt.axhline(0, color="black", linestyle="--")
+plt.fill_between(range(len(sorted_imports)), sorted_imports, 0, where=(sorted_imports > 0), color="red", alpha=0.3, label="Net Import Hours")
+plt.fill_between(range(len(sorted_imports)), sorted_imports, 0, where=(sorted_imports < 0), color="green", alpha=0.3, label="Net Export Hours")
+
+plt.title(f"{HOME_COUNTRY} Net Import Duration Curve")
+plt.xlabel("Hours of the year (Sorted)")
+plt.ylabel("Net Import (MW) -> Negative means Export")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+#%% 15) Regional Capacity Mix Comparison
+import seaborn as sns
+
+# Extract capacities and carriers
+caps = network.generators.p_nom_opt.copy()
+caps.index = network.generators.carrier
+df_caps = caps.reset_index()
+df_caps.columns = ["Carrier", "Capacity (MW)"]
+
+# Map generators to their respective countries
+country_map = []
+for gen_name in network.generators.index:
+    # Extracts the last 3 letters (e.g., 'DEU' from 'onshorewind_DEU')
+    country_map.append(gen_name[-3:]) 
+df_caps["Country"] = country_map
+
+# Pivot the data for a stacked bar chart
+pivot_caps = df_caps.groupby(["Country", "Carrier"])["Capacity (MW)"].sum().unstack().fillna(0)
+
+# Plot
+pivot_caps.plot(kind="bar", stacked=True, figsize=(10, 6), colormap="tab20")
+plt.title("Optimal Generation Capacity Mix by Country")
+plt.ylabel("Installed Capacity (MW)")
+plt.xlabel("Country")
+plt.legend(title="Technology", bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.tight_layout()
+plt.show()
 # %%

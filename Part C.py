@@ -220,8 +220,8 @@ network.add("Link",
 network.optimize(solver_name='gurobi')
 
 # Save the model to LP format
-network.model.to_file('model_D.lp')
-print(f"Model saved to: model_D.lp")
+network.model.to_file('model_C.lp')
+print(f"Model saved to: model_C.lp")
 
 # %%
 optimal_capacities = network.generators.p_nom_opt.sort_values(ascending=False)
