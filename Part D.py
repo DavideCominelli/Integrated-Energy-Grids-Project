@@ -15,6 +15,9 @@ from utils import annuity
 HOME_COUNTRY = "DEU"
 COUNTRIES = ["DEU", "CHE", "CZE", "AUT"]
 
+#we use ntc values for interconnectors
+#it has been refrence in the pypsa tutorial 
+
 INTERCONNECTORS_MW = {
     ("DEU", "CHE"): 4200,
     ("DEU", "CZE"): 2900,
