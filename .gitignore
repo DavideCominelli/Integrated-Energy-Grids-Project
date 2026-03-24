@@ -4,7 +4,4 @@ __pycache__/
 
 #Part B results
 
-b_capacities_by_weather_year.csv
-b_summary_statistics.csv
-b_wind_solar_by_weather_year.csv
-b_wind_solar_summary.csv
+output_b/
