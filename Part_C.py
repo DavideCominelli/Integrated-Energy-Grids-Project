@@ -190,12 +190,31 @@ network.add("StorageUnit",
 network.add("Bus",
           "H2",
           carrier = "H2")
+
+capital_cost_h2_tank = (
+    annuity(tech_data["hydrogen_storage"]["lifetime"], 0.07)
+    * tech_data["hydrogen_storage"]["overnight_cost_energy"]
+    * (1 + tech_data["hydrogen_storage"]["capital_cost_increase"])
+)
+
+capital_cost_h2_electrolysis = (
+    annuity(tech_data["hydrogen_electrolysis"]["lifetime"], 0.07)
+    * tech_data["hydrogen_electrolysis"]["overnight_cost_power"]
+    * (1 + tech_data["hydrogen_electrolysis"]["capital_cost_increase"])
+)
+
+capital_cost_h2_fuel_cell = (
+    annuity(tech_data["hydrogen_fuel_cell"]["lifetime"], 0.07)
+    * tech_data["hydrogen_fuel_cell"]["overnight_cost_power"]
+    * (1 + tech_data["hydrogen_fuel_cell"]["capital_cost_increase"])
+)
+
 network.add("Store",
           "H2 Tank",
           bus = "H2",
           e_nom_extendable = True,
           e_cyclic = True,
-          capital_cost = annuity(25, 0.07)*57000*(1+0.011))
+          capital_cost = capital_cost_h2_tank)
 #Add the link "H2 Electrolysis" that transport energy from the electricity bus (bus0) to the H2 bus (bus1)
 #with 80% efficiency
 network.add("Link",
@@ -203,8 +222,8 @@ network.add("Link",
           bus0 = "electricity bus",
           bus1 = "H2",
           p_nom_extendable = True,
-          efficiency = 0.8,
-          capital_cost = annuity(25, 0.07)*600000*(1+0.05))
+          efficiency = tech_data["hydrogen_electrolysis"]["efficiency"],
+          capital_cost = capital_cost_h2_electrolysis)
 
 #Add the link "H2 Fuel Cell" that transports energy from the H2 bus (bus0) to the electricity bus (bus1)
 #with 58% efficiency
@@ -213,8 +232,8 @@ network.add("Link",
           bus0 = "H2",
           bus1 = "electricity bus",
           p_nom_extendable = True,
-          efficiency = 0.58,
-          capital_cost = annuity(10, 0.07)*1300000*(1+0.05))    
+          efficiency = tech_data["hydrogen_fuel_cell"]["efficiency"],
+          capital_cost = capital_cost_h2_fuel_cell)    
 
 # %%
 network.optimize(solver_name='gurobi')
