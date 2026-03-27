@@ -1,4 +1,7 @@
 #%%
+
+#https://www.entsoe.eu/eraa/2024/modelling-data/#Inputs
+#source for ^ ntc capacity
 import pandas as pd
 import pypsa
 import matplotlib.pyplot as plt
@@ -300,6 +303,7 @@ network.optimize(solver_name="gurobi", solver_options={"output_flag": 0})
 
 network.model.to_file("model_D.lp")
 print("Model saved to: model_D.lp")
+print("Everything below this line is for post-processing and analysis of results, not part of the optimization model itself.")
 
 #%% 9) Main outputs #unsure if i need this atm /its legacy from task C 
 print("\n=== Generator capacities [MW] ===")
@@ -454,24 +458,8 @@ def plot_storage_and_lines_map(network, coords, countries):
 
 # call after optimize
 plot_storage_and_lines_map(network, COORDS, COUNTRIES)
-# %% keyerror load
-#if i want to add it i need to make a new formula that does load_{c} for country
-# Representative winter and summer weeks for 2015.
-plot_dispatch_week_storage(
-    network,
-    week_start="2015-01-12 00:00:00",
-    title="Winter Dispatch (Week of 12 Jan 2015)",
-)
 
-plot_dispatch_week_storage(
-    network,
-    week_start="2015-07-13 00:00:00",
-    title="Summer Dispatch (Week of 13 Jul 2015)",
-)
 
-plot_electricity_mix_storage(network)
-plot_duration_curves_storage(network)
-plot_storage_soc(network)
 # %%
 #%% 12) Renewable Curtailment (DEU)
 print(f"\n=== Renewable Curtailment in {HOME_COUNTRY} ===")
@@ -502,65 +490,13 @@ print(f"Total {HOME_COUNTRY} VRE Curtailment: {total_curtailed:,.0f} MWh ({(tota
 
 
 
-#%% 13) Nodal Prices (Market Convergence)
-# Let's look at a winter week where congestion is likely
-winter_week = slice("2015-01-12", "2015-01-18 23:00")
 
-plt.figure(figsize=(10, 5))
-network.buses_t.marginal_price["DEU bus"].loc[winter_week].plot(label="Germany (DEU)", color="blue")
-network.buses_t.marginal_price["CZE bus"].loc[winter_week].plot(label="Czechia (CZE)", color="orange")
 
-plt.title("Wholesale Electricity Prices: Germany vs Czechia (Winter Week)")
-plt.ylabel("Price (€ / MWh)")
-plt.legend()
-plt.tight_layout()
-plt.show()
 
-#%% 14) Import/Export Duration Curve for DEU
-# Sort the net imports from highest (max import) to lowest (max export)
-sorted_imports = home_net_import_ts.sort_values(ascending=False).values
-
-plt.figure(figsize=(10, 5))
-plt.plot(sorted_imports, color="purple", linewidth=2)
-plt.axhline(0, color="black", linestyle="--")
-plt.fill_between(range(len(sorted_imports)), sorted_imports, 0, where=(sorted_imports > 0), color="red", alpha=0.3, label="Net Import Hours")
-plt.fill_between(range(len(sorted_imports)), sorted_imports, 0, where=(sorted_imports < 0), color="green", alpha=0.3, label="Net Export Hours")
-
-plt.title(f"{HOME_COUNTRY} Net Import Duration Curve")
-plt.xlabel("Hours of the year (Sorted)")
-plt.ylabel("Net Import (MW) -> Negative means Export")
-plt.legend()
-plt.tight_layout()
-plt.show()
-
-#%% 15) Regional Capacity Mix Comparison
-import seaborn as sns
-
-# Extract capacities and carriers
-caps = network.generators.p_nom_opt.copy()
-caps.index = network.generators.carrier
-df_caps = caps.reset_index()
-df_caps.columns = ["Carrier", "Capacity (MW)"]
-
-# Map generators to their respective countries
-country_map = []
-for gen_name in network.generators.index:
-    # Extracts the last 3 letters (e.g., 'DEU' from 'onshorewind_DEU')
-    country_map.append(gen_name[-3:]) 
-df_caps["Country"] = country_map
-
-# Pivot the data for a stacked bar chart
-pivot_caps = df_caps.groupby(["Country", "Carrier"])["Capacity (MW)"].sum().unstack().fillna(0)
-
-# Plot
-pivot_caps.plot(kind="bar", stacked=True, figsize=(10, 6), colormap="tab20")
-plt.title("Optimal Generation Capacity Mix by Country")
-plt.ylabel("Installed Capacity (MW)")
-plt.xlabel("Country")
-plt.legend(title="Technology", bbox_to_anchor=(1.05, 1), loc='upper left')
-plt.tight_layout()
-plt.show()
 # %%
+# Positive means exporter, negative means importer
+net_balance = network.buses_t.p.sum() 
+print(net_balance)
 #%% 16) Total System Cost (Interconnected)
 total_cost_interconnected = network.objective
 print(f"\n=== Total System Cost (Interconnected) ===")
@@ -595,3 +531,219 @@ print(f"\n--- PyPSA Modelled Line Flows at {t0} [MW] ---")
 modelled_flows = network.lines_t.p0.loc[t0]
 print(modelled_flows.round(2).to_string())
 # %%
+# Mean electricity price per node
+print(network.buses_t.marginal_price.mean())
+
+# %%
+# %%
+
+from pypsa.plot import add_legend_patches
+
+
+#%% 11) Map plot (PyPSA style): storage mix pies + transmission lines
+
+
+# Disable the failing PyPSA-style map call
+# plot_storage_mix_and_lines_pypsa(network, COUNTRIES)
+
+def plot_storage_all_and_lines_map(network, coords, countries):
+    fig = plt.figure(figsize=(10, 7))
+    ax = plt.axes(projection=ccrs.PlateCarree())
+
+    lons = [coords[c][0] for c in countries]
+    lats = [coords[c][1] for c in countries]
+    pad_lon, pad_lat = 3.0, 2.5
+    ax.set_extent(
+        [min(lons) - pad_lon, max(lons) + pad_lon, min(lats) - pad_lat, max(lats) + pad_lat],
+        crs=ccrs.PlateCarree(),
+    )
+
+    ax.add_feature(cfeature.LAND, facecolor="#e8e4a8", edgecolor="none")
+    ax.add_feature(cfeature.OCEAN, facecolor="#9bc6d8", edgecolor="none")
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor="gray")
+    ax.add_feature(cfeature.BORDERS, linewidth=0.4, edgecolor="gray")
+
+    # --- lines ---
+    s_nom = network.lines["s_nom"]
+    lw_min, lw_max = 1.5, 14.0
+    smin, smax = float(s_nom.min()), float(s_nom.max())
+
+    for _, row in network.lines.iterrows():
+        c0 = row.bus0.split()[0]
+        c1 = row.bus1.split()[0]
+        x0, y0 = coords[c0]
+        x1, y1 = coords[c1]
+        if smax > smin:
+            lw = lw_min + (row.s_nom - smin) / (smax - smin) * (lw_max - lw_min)
+        else:
+            lw = (lw_min + lw_max) / 2
+        ax.plot([x0, x1], [y0, y1], color="gray", linewidth=lw, alpha=0.9,
+            transform=ccrs.PlateCarree(), zorder=2)
+
+    # --- storage values [GWh] ---
+    h2, batt, ph, total = {}, {}, {}, {}
+    for c in countries:
+        h2_name = f"H2_Tank_{c}"
+        b_name = f"battery_{c}"
+        ph_name = f"Pumped_Hydro_{c}"
+
+        h2[c] = float(network.stores.at[h2_name, "e_nom_opt"]) / 1000.0 if h2_name in network.stores.index else 0.0
+        batt[c] = (
+            float(network.storage_units.at[b_name, "p_nom_opt"]) * float(network.storage_units.at[b_name, "max_hours"]) / 1000.0
+            if b_name in network.storage_units.index else 0.0
+        )
+        ph[c] = (
+            float(network.storage_units.at[ph_name, "p_nom_opt"]) * float(network.storage_units.at[ph_name, "max_hours"]) / 1000.0
+            if ph_name in network.storage_units.index else 0.0
+        )
+        total[c] = h2[c] + batt[c] + ph[c]
+
+    # Bubble area scale (points^2 per GWh)
+    area_scale = 20.0
+    s_min, s_max = 80.0, 2600.0
+
+    def size_from_gwh(gwh):
+        return float(np.clip(gwh * area_scale, s_min, s_max))
+
+    # draw pie bubble at (x, y) via wedge markers
+    def draw_pie_bubble(x, y, values, colors, s):
+        t = sum(values)
+        if t <= 0:
+            return
+        start = 0.0
+        for v, col in zip(values, colors):
+            if v <= 0:
+                continue
+            frac = v / t
+            theta = np.linspace(2 * np.pi * start, 2 * np.pi * (start + frac), 40)
+            verts = np.column_stack([np.r_[0, np.cos(theta), 0], np.r_[0, np.sin(theta), 0]])
+            ax.scatter(
+                [x], [y],
+                marker=verts,
+                s=s,
+                facecolor=col,
+                edgecolor="none",
+                alpha=0.95,
+                transform=ccrs.PlateCarree(),
+                zorder=5
+            )
+            start += frac
+
+        # outline
+        ax.scatter(
+            [x], [y],
+            s=s,
+            marker="o",
+            facecolor="none",
+            edgecolor="black",
+            linewidth=0.5,
+            transform=ccrs.PlateCarree(),
+            zorder=6
+        )
+
+    colors = ["#f2b6c6", "#6cc24a", "#8c6d31"]  # H2, Battery, Pumped Hydro
+
+    for c in countries:
+        x, y = coords[c]
+        s = size_from_gwh(total[c])
+        draw_pie_bubble(x, y, [h2[c], batt[c], ph[c]], colors, s)
+
+    ax.set_title("Installed storage capacities and transmission lines", fontsize=15)
+
+    # Legends
+    leg_lines = ax.legend(
+        handles=[
+            Line2D([0], [0], color="gray", lw=2, label="100 MW"),
+            Line2D([0], [0], color="gray", lw=8, label="1000 MW"),
+        ],
+        loc="upper left",
+        frameon=False,
+        title="Lines",
+    )
+    ax.add_artist(leg_lines)
+
+    leg_types = ax.legend(
+        handles=[
+            Line2D([0], [0], marker="o", linestyle="None", markerfacecolor="#f2b6c6", markeredgecolor="black", label="H2"),
+            Line2D([0], [0], marker="o", linestyle="None", markerfacecolor="#6cc24a", markeredgecolor="black", label="Battery"),
+            Line2D([0], [0], marker="o", linestyle="None", markerfacecolor="#8c6d31", markeredgecolor="black", label="Pumped Hydro"),
+        ],
+        loc="lower right",
+        frameon=False,
+        title="Storage share",
+    )
+    ax.add_artist(leg_types)
+
+    # Use smaller proxy marker sizes in legend to avoid text overlap
+    ms10 = 10
+    ms100 = 18
+
+    # Convert scatter area (points^2) to legend marker size (points)
+    def legend_ms_from_gwh(gwh):
+        return np.sqrt(size_from_gwh(gwh))
+
+    ms10 = legend_ms_from_gwh(10.0)
+    ms100 = legend_ms_from_gwh(100.0)
+
+    leg_size = ax.legend(
+        handles=[
+            Line2D([0], [0], marker="o", linestyle="None",
+                   markerfacecolor="lightgray", markeredgecolor="black",
+                   markersize=ms10, label="10 GWh"),
+            Line2D([0], [0], marker="o", linestyle="None",
+                   markerfacecolor="lightgray", markeredgecolor="black",
+                   markersize=ms100, label="100 GWh"),
+        ],
+        loc="upper right",
+        frameon=False,
+        title="Total storage",
+        labelspacing=2.3,
+        handletextpad=1.8,
+        borderpad=0.4,
+    )
+    ax.add_artist(leg_size)
+
+    plt.show()
+
+
+plot_storage_all_and_lines_map(network, COORDS, COUNTRIES)
+
+
+
+
+#%%
+
+
+def print_storage_totals(network, countries):
+    h2_gwh = pd.Series({
+        c: (float(network.stores.at[f"H2_Tank_{c}", "e_nom_opt"]) / 1000.0
+            if f"H2_Tank_{c}" in network.stores.index else 0.0)
+        for c in countries
+    }, name="H2_GWh")
+
+    battery_gwh = pd.Series({
+        c: (float(network.storage_units.at[f"battery_{c}", "p_nom_opt"]) *
+            float(network.storage_units.at[f"battery_{c}", "max_hours"]) / 1000.0
+            if f"battery_{c}" in network.storage_units.index else 0.0)
+        for c in countries
+    }, name="Battery_GWh")
+
+    pumped_gwh = pd.Series({
+        c: (float(network.storage_units.at[f"Pumped_Hydro_{c}", "p_nom_opt"]) *
+            float(network.storage_units.at[f"Pumped_Hydro_{c}", "max_hours"]) / 1000.0
+            if f"Pumped_Hydro_{c}" in network.storage_units.index else 0.0)
+        for c in countries
+    }, name="Pumped_Hydro_GWh")
+
+    df = pd.concat([h2_gwh, battery_gwh, pumped_gwh], axis=1)
+    df["Total_GWh"] = df.sum(axis=1)
+
+    print("\n=== Storage capacity by country [GWh] ===")
+    print(df.round(3).to_string())
+
+    print("\n=== System totals [GWh] ===")
+    print(df.sum().round(3).to_string())
+
+
+# after network.optimize(...)
+print_storage_totals(network, COUNTRIES)
