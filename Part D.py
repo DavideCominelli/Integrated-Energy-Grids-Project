@@ -787,3 +787,100 @@ print(f"Sum of imbalances: {imbalances.sum():.4f} MW")
 print(f"\n--- PyPSA Modelled Line Flows at {t0} [MW] ---")
 modelled_flows = network.lines_t.p0.loc[t0]
 print(modelled_flows.round(2).to_string())
+# %%
+# ...existing code...
+
+def plot_country_nodes_and_lines_map(network, coords, countries):
+    fig = plt.figure(figsize=(10, 7))
+    ax = plt.axes(projection=ccrs.PlateCarree())
+
+    # map extent
+    lons = [coords[c][0] for c in countries]
+    lats = [coords[c][1] for c in countries]
+    pad_lon = 3.0
+    pad_lat_south = 1.5
+    pad_lat_north = 0.8   # smaller value => less far north shown
+
+    ax.set_extent(
+        [
+            min(lons) - pad_lon,
+            max(lons) + pad_lon,
+            min(lats) - pad_lat_south,
+            max(lats) + pad_lat_north,
+        ],
+        crs=ccrs.PlateCarree(),
+    )
+
+    # background
+    ax.add_feature(cfeature.LAND, facecolor="#e8e4a8", edgecolor="none")
+    ax.add_feature(cfeature.OCEAN, facecolor="#9bc6d8", edgecolor="none")
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor="gray")
+    ax.add_feature(cfeature.BORDERS, linewidth=0.4, edgecolor="gray")
+
+    # transmission lines: width scaled by s_nom
+    s_nom = network.lines["s_nom"]
+    lw_min, lw_max = 1.5, 14.0
+    smin, smax = float(s_nom.min()), float(s_nom.max())
+
+    for _, row in network.lines.iterrows():
+        c0 = row.bus0.split()[0]
+        c1 = row.bus1.split()[0]
+        x0, y0 = coords[c0]
+        x1, y1 = coords[c1]
+
+        if smax > smin:
+            lw = lw_min + (row.s_nom - smin) / (smax - smin) * (lw_max - lw_min)
+        else:
+            lw = (lw_min + lw_max) / 2
+
+        ax.plot(
+            [x0, x1], [y0, y1],
+            color="gray",
+            linewidth=lw,
+            alpha=0.9,
+            transform=ccrs.PlateCarree(),
+            zorder=2,
+        )
+
+    # always draw 1 bubble per country (fixed size)
+    bubble_size = 1200  # points^2
+    for c in countries:
+        x, y = coords[c]
+        ax.scatter(
+            x, y,
+            s=bubble_size,
+            color="#cfcfcf",
+            edgecolor="black",
+            linewidth=0.7,
+            transform=ccrs.PlateCarree(),
+            zorder=5,
+        )
+        ax.text(
+            x + 0.25, y + 0.15, c,
+            fontsize=9,
+            transform=ccrs.PlateCarree(),
+            zorder=6,
+        )
+
+    ax.set_title("Country nodes and transmission lines", fontsize=15)
+
+    # line legend only
+    leg_lines = ax.legend(
+        handles=[
+            Line2D([0], [0], color="gray", lw=2, label="100 MW"),
+            Line2D([0], [0], color="gray", lw=8, label="1000 MW"),
+        ],
+        loc="upper left",
+        frameon=False,
+        title="Lines",
+    )
+    ax.add_artist(leg_lines)
+
+    plt.tight_layout()
+    plt.show()
+
+# Use this instead of the storage pie map
+plot_country_nodes_and_lines_map(network, COORDS, COUNTRIES)
+
+# ...existing code...
+# %%
