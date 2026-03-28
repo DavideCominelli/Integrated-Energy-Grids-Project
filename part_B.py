@@ -1,41 +1,262 @@
-#%%
-import pandas as pd
-import matplotlib.pyplot as plt
-import pypsa
-
-from data.data import tech_data
-from utils import annuity
-
-
+# (Removed duplicate/obsolete save and plot calls; all results are already saved and plotted above)
 
 
 #%%
+# -------------------------------------------------------------------------
+# Global settings
+# -------------------------------------------------------------------------
+country = "DEU"
+demand_year = 2015
+weather_years = [2013, 2014, 2015, 2016, 2017]
+
+wind_file = "data/onshore_wind_1979-2017.csv"
+solar_file = "data/pv_optimal.csv"
+
+# Output folders
+OUTPUT_DIR = Path("output_b")
+FIG_DIR = OUTPUT_DIR / "figures"
+DATA_DIR = OUTPUT_DIR / "data"
+
+# Create folders if they do not exist
+FIG_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+#%%
+# -------------------------------------------------------------------------
+# Section 1: Resource-side helper functions
+# -------------------------------------------------------------------------
+def load_cf_data(file_path, country):
+    """
+    Load capacity factor data from a CSV file and return the selected country
+    as a pandas time series.
+    """
+    df = pd.read_csv(file_path, sep=";", index_col=0)
+    df.index = pd.to_datetime(df.index)
+
+    if country not in df.columns:
+        raise KeyError(f"Country '{country}' not found in {file_path}")
+
+    series = df[country].copy()
+    series.name = country
+    return series
+
+
+#%%
+def extract_selected_years(series, years):
+    """
+    Keep only the selected weather years from a time series.
+    """
+    return series[series.index.year.isin(years)].copy()
+
+
+#%%
+def resource_analysis(country, weather_years, wind_file, solar_file):
+    """
+    Analyze wind and solar resource variability across the selected weather years.
+
+    Outputs:
+    - annual mean CF table
+    - monthly mean CF tables
+    - seasonal average profiles
+    """
+    # Load full wind and solar CF series
+    wind_cf = load_cf_data(wind_file, country)
+    solar_cf = load_cf_data(solar_file, country)
+
+    # Keep only the selected years
+    wind_cf = extract_selected_years(wind_cf, weather_years)
+    solar_cf = extract_selected_years(solar_cf, weather_years)
+
+    # Annual mean CF
+    annual_mean_cf = pd.DataFrame({
+        "wind_mean_cf": wind_cf.groupby(wind_cf.index.year).mean(),
+        "solar_mean_cf": solar_cf.groupby(solar_cf.index.year).mean(),
+    })
+    annual_mean_cf = annual_mean_cf.loc[weather_years]
+
+    # Monthly mean CF for each year
+    wind_monthly = (
+        wind_cf.groupby([wind_cf.index.year.rename("year"),
+                         wind_cf.index.month.rename("month")])
+        .mean()
+        .unstack(level=0)
+    )
+
+    solar_monthly = (
+        solar_cf.groupby([solar_cf.index.year.rename("year"),
+                          solar_cf.index.month.rename("month")])
+        .mean()
+        .unstack(level=0)
+    )
+
+    wind_monthly = wind_monthly.loc[1:12]
+    solar_monthly = solar_monthly.loc[1:12]
+
+    # Average seasonal profiles across all selected years
+    seasonal_profiles = pd.DataFrame({
+        "wind_mean_2013_2017": wind_cf.groupby(wind_cf.index.month).mean(),
+        "solar_mean_2013_2017": solar_cf.groupby(solar_cf.index.month).mean(),
+    })
+
+    return wind_cf, solar_cf, annual_mean_cf, wind_monthly, solar_monthly, seasonal_profiles
+
+
+#%%
+# -------------------------------------------------------------------------
+# Section 2: Resource-side plotting functions
+# -------------------------------------------------------------------------
+def plot_annual_mean_cf(annual_mean_cf, weather_years, save_path):
+    """
+    Plot annual mean wind and solar capacity factors for the selected years.
+    """
+    fig, ax = plt.subplots(figsize=(9, 6))
+
+    x = range(len(weather_years))
+    width = 0.35
+
+    ax.bar(
+        [i - width/2 for i in x],
+        annual_mean_cf["wind_mean_cf"],
+        width=width,
+        label="Onshore wind"
+    )
+
+    ax.bar(
+        [i + width/2 for i in x],
+        annual_mean_cf["solar_mean_cf"],
+        width=width,
+        label="Solar PV"
+    )
+
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(weather_years)
+    ax.set_xlabel("Weather year")
+    ax.set_ylabel("Annual mean capacity factor [-]")
+    ax.set_title("Annual mean wind and solar capacity factors (2013-2017)")
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+#%%
+def plot_monthly_mean_cf(wind_monthly, solar_monthly, weather_years, save_path):
+    """
+    Plot monthly mean wind and solar capacity factors for each weather year.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharex=True)
+
+    for year in weather_years:
+        axes[0].plot(wind_monthly.index, wind_monthly[year], label=str(year))
+    axes[0].set_title("Monthly mean onshore wind CF")
+    axes[0].set_xlabel("Month")
+    axes[0].set_ylabel("Capacity factor [-]")
+    axes[0].set_xticks(range(1, 13))
+
+    for year in weather_years:
+        axes[1].plot(solar_monthly.index, solar_monthly[year], label=str(year))
+    axes[1].set_title("Monthly mean solar PV CF")
+    axes[1].set_xlabel("Month")
+    axes[1].set_ylabel("Capacity factor [-]")
+    axes[1].set_xticks(range(1, 13))
+
+    axes[1].legend(title="Year", bbox_to_anchor=(1.02, 1), loc="upper left")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+#%%
+def plot_wind_solar_scatter(annual_mean_cf, weather_years, save_path):
+    """
+    Plot the relationship between annual mean wind CF and solar CF.
+    """
+    fig, ax = plt.subplots(figsize=(7, 6))
+
+    ax.scatter(
+        annual_mean_cf["wind_mean_cf"],
+        annual_mean_cf["solar_mean_cf"]
+    )
+
+    for year in weather_years:
+        ax.annotate(
+            str(year),
+            (
+                annual_mean_cf.loc[year, "wind_mean_cf"],
+                annual_mean_cf.loc[year, "solar_mean_cf"]
+            ),
+            xytext=(5, 5),
+            textcoords="offset points"
+        )
+
+    ax.set_xlabel("Annual mean wind CF [-]")
+    ax.set_ylabel("Annual mean solar CF [-]")
+    ax.set_title("Relationship between annual mean wind and solar CF")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+#%%
+def plot_seasonal_profiles(seasonal_profiles, save_path):
+    """
+    Plot the average seasonal wind and solar profiles across all selected years.
+    """
+    fig, ax = plt.subplots(figsize=(9, 5))
+
+    ax.plot(
+        seasonal_profiles.index,
+        seasonal_profiles["wind_mean_2013_2017"],
+        marker="o",
+        label="Onshore wind"
+    )
+    ax.plot(
+        seasonal_profiles.index,
+        seasonal_profiles["solar_mean_2013_2017"],
+        marker="o",
+        label="Solar PV"
+    )
+
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Capacity factor [-]")
+    ax.set_title("Average seasonal wind and solar profiles (2013-2017)")
+    ax.set_xticks(range(1, 13))
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+#%%
+# -------------------------------------------------------------------------
+# Section 3: System-side helper functions
+# -------------------------------------------------------------------------
 def get_yearly_cf_series(file_path, country, target_year, snapshot_index):
-    
+    """
+    Read one full year of hourly capacity factor data for a selected country,
+    then align it to the model snapshots.
+    """
     df = pd.read_csv(file_path, sep=";", index_col=0)
     df.index = pd.to_datetime(df.index)
 
     if country not in df.columns:
         raise KeyError(f"Country '{country}' not found in file: {file_path}")
 
-    # Select the target year
     cf_series = df.loc[df.index.year == target_year, country]
 
     if cf_series.empty:
-        raise ValueError(
-            f"No data found for year {target_year} in file: {file_path}"
-        )
+        raise ValueError(f"No data found for year {target_year} in {file_path}")
 
     cf_series = cf_series.sort_index()
-
-    # Remove timezone for safe alignment
     cf_series.index = cf_series.index.tz_localize(None)
     snapshot_index = pd.DatetimeIndex(snapshot_index).tz_localize(None)
 
-    # Align to snapshots exactly
     cf_series = cf_series.reindex(snapshot_index)
-
-    # Fill possible missing values created during alignment
     cf_series = cf_series.interpolate(method="time").ffill().bfill()
 
     return cf_series
@@ -43,42 +264,34 @@ def get_yearly_cf_series(file_path, country, target_year, snapshot_index):
 
 #%%
 def build_aligned_demand_series(df_elec, country, demand_year, snapshot_index):
-    
+    """
+    Build a demand time series aligned to the selected weather year snapshots.
+    """
     demand_series = df_elec.loc[df_elec.index.year == demand_year, country]
 
     if demand_series.empty:
-        print(f"Warning: no demand data found for {demand_year}, using 2015 demand instead.")
-        demand_series = df_elec.loc[df_elec.index.year == 2015, country]
-
-    if demand_series.empty:
-        raise ValueError(
-            f"No electricity demand found for year {demand_year}, and fallback year 2015 also not found."
-        )
+        raise ValueError(f"No demand data found for year {demand_year}")
 
     demand_series = demand_series.sort_index()
-
-    # Remove timezone
     demand_series.index = demand_series.index.tz_localize(None)
     snapshot_index = pd.DatetimeIndex(snapshot_index).tz_localize(None)
 
-    # Rebuild timestamps so month/day/hour pattern matches the snapshot year
-    # This is important when using one demand profile shape with another year.
     source_year = demand_series.index[0].year
     target_year = snapshot_index[0].year
 
     if source_year != target_year:
         new_index = []
-        for t in demand_series.index:
+        valid_values = []
+
+        for t, val in demand_series.items():
             try:
                 new_index.append(t.replace(year=target_year))
+                valid_values.append(val)
             except ValueError:
-                # Handles Feb 29 issues when source/target leap-year status differs
-                # Use interpolation later after reindexing
-                continue
-        demand_series = demand_series.iloc[:len(new_index)].copy()
-        demand_series.index = pd.DatetimeIndex(new_index)
+                pass
 
-    # Align to snapshots
+        demand_series = pd.Series(valid_values, index=pd.DatetimeIndex(new_index))
+
     demand_aligned = demand_series.reindex(snapshot_index)
     demand_aligned = demand_aligned.interpolate(method="time").ffill().bfill()
 
@@ -87,11 +300,9 @@ def build_aligned_demand_series(df_elec, country, demand_year, snapshot_index):
 
 #%%
 def build_network(country="DEU", demand_year=2015, weather_year=2015):
-    
-
-    
-    # 1. Create network and define hourly snapshots for the weather year
-    
+    """
+    Build a single-node PyPSA network for one weather year.
+    """
     network = pypsa.Network()
 
     hours = pd.date_range(
@@ -101,14 +312,9 @@ def build_network(country="DEU", demand_year=2015, weather_year=2015):
     )
     network.set_snapshots(hours.values)
 
-    
-    # 2. Add one electricity bus (single-node / copper-plate system)
-  
     network.add("Bus", "electricity bus")
 
-   
-    # 3. Add electricity demand
-   
+    # Demand
     df_elec = pd.read_csv("data/electricity_demand.csv", sep=";", index_col=0)
     df_elec.index = pd.to_datetime(df_elec.index)
 
@@ -126,31 +332,21 @@ def build_network(country="DEU", demand_year=2015, weather_year=2015):
         p_set=demand_aligned.values
     )
 
-   
-    # 4. Add carriers
-    
-    network.add("Carrier", "gas", co2_emissions=0.19)  # tCO2/MWh_th
+    # Carriers
+    network.add("Carrier", "gas", co2_emissions=0.19)
     network.add("Carrier", "onshorewind")
     network.add("Carrier", "solar")
     network.add("Carrier", "hydro")
 
-    
-    # 5. Add wind generator using the selected weather year
-    
+    # Wind
     cf_wind = get_yearly_cf_series(
-        file_path="data/onshore_wind_1979-2017.csv",
+        file_path=wind_file,
         country=country,
         target_year=weather_year,
         snapshot_index=network.snapshots
     )
 
-    if len(cf_wind) != len(network.snapshots):
-        raise ValueError(
-            f"Wind CF length ({len(cf_wind)}) does not match model snapshots "
-            f"({len(network.snapshots)})."
-        )
-
-    capital_cost_onshorewind = (
+    capital_cost_wind = (
         annuity(tech_data["onshorewind"]["lifetime"], 0.07)
         * tech_data["onshorewind"]["overnight_cost"]
         * (1 + tech_data["onshorewind"]["capital_cost_increase"])
@@ -162,26 +358,18 @@ def build_network(country="DEU", demand_year=2015, weather_year=2015):
         bus="electricity bus",
         p_nom_extendable=True,
         carrier="onshorewind",
-        capital_cost=capital_cost_onshorewind,
+        capital_cost=capital_cost_wind,
         marginal_cost=0,
         p_max_pu=cf_wind.values
     )
 
-    
-    # 6. Add solar generators using the selected weather year
-    
+    # Solar
     cf_solar = get_yearly_cf_series(
-        file_path="data/pv_optimal.csv",
+        file_path=solar_file,
         country=country,
         target_year=weather_year,
         snapshot_index=network.snapshots
     )
-
-    if len(cf_solar) != len(network.snapshots):
-        raise ValueError(
-            f"Solar CF length ({len(cf_solar)}) does not match model snapshots "
-            f"({len(network.snapshots)})."
-        )
 
     capital_cost_solar = (
         annuity(tech_data["solar"]["lifetime"], 0.07)
@@ -217,9 +405,7 @@ def build_network(country="DEU", demand_year=2015, weather_year=2015):
         p_max_pu=cf_solar.values
     )
 
-    
-    # 7. Add hydro as fixed existing capacities
-    
+    # Existing hydro
     network.add(
         "Generator",
         "run_of_river",
@@ -242,18 +428,16 @@ def build_network(country="DEU", demand_year=2015, weather_year=2015):
         p_max_pu=tech_data["hydro_reservoir"]["availability"]
     )
 
-    
-    # 8. Add OCGT
-    
+    # OCGT
     capital_cost_ocgt = (
         annuity(tech_data["OCGT"]["lifetime"], 0.07)
         * tech_data["OCGT"]["overnight_cost"]
         * (1 + tech_data["OCGT"]["capital_cost_increase"])
     )
 
-    fuel_cost = tech_data["OCGT"]["fuel_cost"]      # €/MWh_th
-    efficiency = tech_data["OCGT"]["efficiency"]    # MWh_el / MWh_th
-    marginal_cost_ocgt = fuel_cost / efficiency     # €/MWh_el
+    fuel_cost = tech_data["OCGT"]["fuel_cost"]
+    efficiency = tech_data["OCGT"]["efficiency"]
+    marginal_cost_ocgt = fuel_cost / efficiency
 
     network.add(
         "Generator",
@@ -266,36 +450,7 @@ def build_network(country="DEU", demand_year=2015, weather_year=2015):
         efficiency=efficiency
     )
 
-    
-    # Debug prints
-   
-    print(f"\nWeather year = {weather_year}")
-    print("Demand length:", len(demand_aligned), "NaN:", demand_aligned.isna().sum())
-    print("Wind CF length:", len(cf_wind), "min:", cf_wind.min(), "max:", cf_wind.max(), "NaN:", cf_wind.isna().sum())
-    print("Solar CF length:", len(cf_solar), "min:", cf_solar.min(), "max:", cf_solar.max(), "NaN:", cf_solar.isna().sum())
-
     return network
-
-
-#%%
-def aggregate_capacities(raw_capacities):
-    """
-    Aggregate generator capacities into broader technology groups.
-    """
-    agg = pd.Series(dtype=float)
-
-    agg["wind"] = raw_capacities.get("onshorewind", 0.0)
-    agg["solar_total"] = (
-        raw_capacities.get("solar", 0.0) +
-        raw_capacities.get("solar_rooftop", 0.0)
-    )
-    agg["hydro_total"] = (
-        raw_capacities.get("run_of_river", 0.0) +
-        raw_capacities.get("hydro_reservoir", 0.0)
-    )
-    agg["gas"] = raw_capacities.get("OCGT", 0.0)
-
-    return agg
 
 
 #%%
@@ -306,16 +461,17 @@ def run_weather_variability_analysis(
     solver_name="gurobi"
 ):
     """
-    Run the optimization for a list of weather years and collect results.
+    Solve the optimization model for multiple weather years
+    and collect optimal capacities.
     """
     if weather_years is None:
         weather_years = [2013, 2014, 2015, 2016, 2017]
 
-    all_results = []
+    results = []
 
     for year in weather_years:
         print("=" * 70)
-        print(f"Solving for weather year {year}")
+        print(f"Solving model for weather year {year}")
 
         network = build_network(
             country=country,
@@ -323,18 +479,16 @@ def run_weather_variability_analysis(
             weather_year=year
         )
 
-        network.optimize(solver_name=solver_name, solver_options={"output_flag": 0, "logtoconsole": 0})
+        network.optimize(
+            solver_name=solver_name,
+            solver_options={"output_flag": 0, "logtoconsole": 0}
+        )
 
-        # Save LP model if needed
-        network.model.to_file(f"model_weather_{year}.lp")
+        capacities = network.generators.p_nom_opt.copy()
+        capacities.name = year
+        results.append(capacities)
 
-        raw_capacities = network.generators.p_nom_opt.copy()
-        agg_capacities = aggregate_capacities(raw_capacities)
-        agg_capacities.name = year
-
-        all_results.append(agg_capacities)
-
-    capacities_by_year = pd.DataFrame(all_results)
+    capacities_by_year = pd.DataFrame(results)
     capacities_by_year.index.name = "weather_year"
 
     summary_stats = pd.DataFrame({
@@ -348,31 +502,30 @@ def run_weather_variability_analysis(
 
 
 #%%
-def plot_capacities_by_weather_year(capacities_by_year):
+# -------------------------------------------------------------------------
+# Section 4: System-side plotting functions
+# -------------------------------------------------------------------------
+def plot_capacities_by_weather_year(capacities_by_year, save_path):
     """
-    Plot installed capacities for each technology across weather years.
+    Plot optimal installed capacities for all generators across weather years.
     """
-    ax = capacities_by_year.plot(kind="bar", figsize=(11, 6))
+    ax = capacities_by_year.plot(kind="bar", figsize=(12, 6))
     ax.set_xlabel("Weather year")
     ax.set_ylabel("Installed capacity [MW]")
-    ax.set_title("Optimal capacities for different weather years")
+    ax.set_title("Optimal capacities under different weather years")
     plt.xticks(rotation=0)
     plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
     plt.show()
+    plt.close()
+
 
 #%%
-def extract_wind_solar_only(capacities_by_year):
+def plot_average_capacity_with_variability(summary_stats, save_path):
     """
-    Keep only wind and solar_total columns for a focused comparison.
+    Plot average installed capacity and standard deviation for all generators.
     """
-    return capacities_by_year[["wind", "solar_total"]].copy()
-
-#%%
-def plot_average_capacity_with_variability(summary_stats):
-    """
-    Plot average capacity with variability (standard deviation) as error bars.
-    """
-    fig, ax = plt.subplots(figsize=(9, 6))
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     ax.bar(
         x=summary_stats.index,
@@ -381,60 +534,98 @@ def plot_average_capacity_with_variability(summary_stats):
         capsize=6
     )
 
-    ax.set_xlabel("Technology")
+    ax.set_xlabel("Generator")
     ax.set_ylabel("Installed capacity [MW]")
-    ax.set_title("Average capacity and variability across weather years")
+    ax.set_title("Average installed capacity and variability across weather years")
+    plt.xticks(rotation=20)
     plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
     plt.show()
+    plt.close(fig)
+
 
 #%%
-def plot_wind_solar_by_weather_year(wind_solar_df):
+def plot_wind_solar_only(capacities_by_year, save_path):
     """
-    Plot only wind and solar capacities across weather years.
+    Plot wind and total solar capacities only.
     """
-    ax = wind_solar_df.plot(kind="bar", figsize=(10, 6))
+    wind_solar = pd.DataFrame(index=capacities_by_year.index)
+    wind_solar["onshorewind"] = capacities_by_year["onshorewind"]
+    wind_solar["solar_total"] = capacities_by_year["solar"] + capacities_by_year["solar_rooftop"]
+
+    ax = wind_solar.plot(kind="bar", figsize=(10, 6))
     ax.set_xlabel("Weather year")
     ax.set_ylabel("Installed capacity [MW]")
-    ax.set_title("Optimal wind and solar capacities for different weather years")
+    ax.set_title("Wind and total solar capacities under different weather years")
     plt.xticks(rotation=0)
     plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
     plt.show()
+    plt.close()
+
+    return wind_solar
 
 
 #%%
-def plot_wind_solar_average_variability(wind_solar_summary):
+def plot_wind_solar_average_variability(wind_solar_df, save_path):
     """
-    Plot average capacity with variability for wind and solar only.
+    Plot average capacity and standard deviation for wind and total solar only.
     """
-    fig, ax = plt.subplots(figsize=(8, 6))
+    wind_solar_summary = pd.DataFrame({
+        "mean_MW": wind_solar_df.mean(axis=0),
+        "std_MW": wind_solar_df.std(axis=0),
+        "min_MW": wind_solar_df.min(axis=0),
+        "max_MW": wind_solar_df.max(axis=0),
+    })
 
+    fig, ax = plt.subplots(figsize=(8, 6))
     ax.bar(
         x=wind_solar_summary.index,
         height=wind_solar_summary["mean_MW"],
         yerr=wind_solar_summary["std_MW"],
         capsize=6
     )
-
     ax.set_xlabel("Technology")
     ax.set_ylabel("Installed capacity [MW]")
-    ax.set_title("Average capacity and variability of wind and solar")
+    ax.set_title("Average capacity and variability of wind and total solar")
     plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
     plt.show()
+    plt.close(fig)
+
+    return wind_solar_summary
+
 
 #%%
 if __name__ == "__main__":
+    # =====================================================================
+    # Part 1: Resource-side analysis
+    # =====================================================================
+    wind_cf, solar_cf, annual_mean_cf, wind_monthly, solar_monthly, seasonal_profiles = resource_analysis(
+        country=country,
+        weather_years=weather_years,
+        wind_file=wind_file,
+        solar_file=solar_file
+    )
 
-   
-    # Fixed settings
-    
-    country = "DEU"        
-    demand_year = 2015     # keep demand profile fixed to isolate weather effects
+    print("\nAnnual mean capacity factors:")
+    print(annual_mean_cf)
 
-    
-    # Weather years to compare
-    
-    weather_years = [2013, 2014, 2015, 2016, 2017]
+    # Save resource-side data
+    annual_mean_cf.to_csv(DATA_DIR / "annual_mean_cf_2013_2017.csv")
+    wind_monthly.to_csv(DATA_DIR / "monthly_wind_cf_2013_2017.csv")
+    solar_monthly.to_csv(DATA_DIR / "monthly_solar_cf_2013_2017.csv")
+    seasonal_profiles.to_csv(DATA_DIR / "seasonal_profiles_2013_2017.csv")
 
+    # Plot resource-side figures
+    plot_annual_mean_cf(annual_mean_cf, weather_years, FIG_DIR / "annual_mean_cf.png")
+    plot_monthly_mean_cf(wind_monthly, solar_monthly, weather_years, FIG_DIR / "monthly_mean_cf.png")
+    plot_wind_solar_scatter(annual_mean_cf, weather_years, FIG_DIR / "wind_solar_scatter.png")
+    plot_seasonal_profiles(seasonal_profiles, FIG_DIR / "seasonal_profiles.png")
+
+    # =====================================================================
+    # Part 2: System-side optimization analysis
+    # =====================================================================
     capacities_by_year, summary_stats = run_weather_variability_analysis(
         country=country,
         demand_year=demand_year,
@@ -442,48 +633,40 @@ if __name__ == "__main__":
         solver_name="gurobi"
     )
 
-    
-    # Print all results
-  
     print("\nOptimal capacities by weather year [MW]:")
     print(capacities_by_year)
 
     print("\nAverage capacity and variability [MW]:")
     print(summary_stats)
 
-   
-    #  wind and solar only
-    
-    wind_solar_by_year = extract_wind_solar_only(capacities_by_year)
+    # Save system-side data
+    capacities_by_year.to_csv(DATA_DIR / "b_capacities_by_weather_year.csv")
+    summary_stats.to_csv(DATA_DIR / "b_summary_statistics.csv")
 
-    wind_solar_summary = pd.DataFrame({
-    "mean_MW": wind_solar_by_year.mean(axis=0),
-    "std_MW": wind_solar_by_year.std(axis=0),
-    "min_MW": wind_solar_by_year.min(axis=0),
-    "max_MW": wind_solar_by_year.max(axis=0),
-    })
+    # Plot all-generator results
+    plot_capacities_by_weather_year(
+        capacities_by_year,
+        FIG_DIR / "b_capacities_by_weather_year.png"
+    )
+    plot_average_capacity_with_variability(
+        summary_stats,
+        FIG_DIR / "b_summary_statistics.png"
+    )
 
-    print("\nWind and solar capacities only [MW]:")
-    print(wind_solar_by_year)
+    # Plot wind and solar focused results
+    wind_solar_df = plot_wind_solar_only(
+        capacities_by_year,
+        FIG_DIR / "b_wind_solar_by_weather_year.png"
+    )
+    wind_solar_summary = plot_wind_solar_average_variability(
+        wind_solar_df,
+        FIG_DIR / "b_wind_solar_summary.png"
+    )
 
-    print("\nWind and solar summary statistics [MW]:")
-    print(wind_solar_summary)
+    # Save wind and solar focused data
+    wind_solar_df.to_csv(DATA_DIR / "b_wind_solar_by_weather_year.csv")
+    wind_solar_summary.to_csv(DATA_DIR / "b_wind_solar_summary.csv")
 
-   
-    # Save results
-   
-    capacities_by_year.to_csv("weather_variability_capacities_by_year.csv")
-    summary_stats.to_csv("weather_variability_summary_stats.csv")
-
-    wind_solar_by_year.to_csv("weather_variability_wind_solar_by_year.csv")
-    wind_solar_summary.to_csv("weather_variability_wind_solar_summary.csv")
-
-   
-    # Plot results
-   
-    plot_capacities_by_weather_year(capacities_by_year)
-    plot_average_capacity_with_variability(summary_stats)
-
-    plot_wind_solar_by_weather_year(wind_solar_by_year)
-    plot_wind_solar_average_variability(wind_solar_summary)
-# %%
+    print("\nAll outputs saved under:")
+    print(f"- Figures: {FIG_DIR.resolve()}")
+    print(f"- Data:    {DATA_DIR.resolve()}")

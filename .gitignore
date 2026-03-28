@@ -5,3 +5,5 @@ data/windforecast
 *.lp
 *.csv
 IEG_course_projectNY.ipynb
+#Part B results
+output_b/
