@@ -142,19 +142,22 @@ capital_cost_pumped_hydro_power = (
     * tech_data["Pumped_Hydro"]["overnight_cost_power"]
     * (1 + tech_data["Pumped_Hydro"]["capital_cost_increase"])
 )
-capital_cost_pumped_hydro_energy = (
-    annuity(tech_data["Pumped_Hydro"]["lifetime"], 0.07)
-    * tech_data["Pumped_Hydro"]["overnight_cost_energy"]
-    * (1 + tech_data["Pumped_Hydro"]["capital_cost_increase"])
-)
+pumped_hydro_max_power = tech_data["Pumped_Hydro"]["max_power_capacity"]
+pumped_hydro_max_energy = tech_data["Pumped_Hydro"]["max_energy_capacity"]
+if pumped_hydro_max_power <= 0:
+    raise ValueError("Pumped_Hydro max_power_capacity must be > 0")
 
-total_capital_cost_pumped_hydro = capital_cost_pumped_hydro_power + capital_cost_pumped_hydro_energy * tech_data["Pumped_Hydro"]["max_hours"]
+# New data provides absolute power and energy limits. Convert to equivalent storage duration.
+pumped_hydro_max_hours = pumped_hydro_max_energy / pumped_hydro_max_power
+
+total_capital_cost_pumped_hydro = capital_cost_pumped_hydro_power
 network.add("StorageUnit", 
             "Pumped_Hydro", 
             bus="electricity bus", 
             p_nom_extendable=True,   
+            p_nom_max=pumped_hydro_max_power,
             capital_cost= total_capital_cost_pumped_hydro, 
-            max_hours=tech_data["Pumped_Hydro"]["max_hours"],             
+            max_hours=pumped_hydro_max_hours,
             efficiency_store=tech_data["Pumped_Hydro"]["efficiency_store"],     
             efficiency_dispatch=tech_data["Pumped_Hydro"]["efficiency_dispatch"],  
             cyclic_state_of_charge=True,
@@ -174,13 +177,14 @@ capital_cost_battery_energy = (
     * (1 + tech_data["battery"]["capital_cost_increase"])
 )
 
-total_capital_cost_battery = capital_cost_battery_power + capital_cost_battery_energy * tech_data["battery"]["max_hours"]
+battery_max_hours = tech_data["battery"].get("max_hours", 4)
+total_capital_cost_battery = capital_cost_battery_power + capital_cost_battery_energy * battery_max_hours
 network.add("StorageUnit", 
             "battery", 
             bus="electricity bus", 
             p_nom_extendable=True,   
             capital_cost= total_capital_cost_battery, 
-            max_hours=tech_data["battery"]["max_hours"],             
+            max_hours=battery_max_hours,
             efficiency_store=tech_data["battery"]["efficiency_store"],     
             efficiency_dispatch=tech_data["battery"]["efficiency_dispatch"],  
             cyclic_state_of_charge=True, 
@@ -190,12 +194,31 @@ network.add("StorageUnit",
 network.add("Bus",
           "H2",
           carrier = "H2")
+
+capital_cost_h2_tank = (
+    annuity(tech_data["hydrogen_storage"]["lifetime"], 0.07)
+    * tech_data["hydrogen_storage"]["overnight_cost_energy"]
+    * (1 + tech_data["hydrogen_storage"]["capital_cost_increase"])
+)
+
+capital_cost_h2_electrolysis = (
+    annuity(tech_data["hydrogen_electrolysis"]["lifetime"], 0.07)
+    * tech_data["hydrogen_electrolysis"]["overnight_cost_power"]
+    * (1 + tech_data["hydrogen_electrolysis"]["capital_cost_increase"])
+)
+
+capital_cost_h2_fuel_cell = (
+    annuity(tech_data["hydrogen_fuel_cell"]["lifetime"], 0.07)
+    * tech_data["hydrogen_fuel_cell"]["overnight_cost_power"]
+    * (1 + tech_data["hydrogen_fuel_cell"]["capital_cost_increase"])
+)
+
 network.add("Store",
           "H2 Tank",
           bus = "H2",
           e_nom_extendable = True,
           e_cyclic = True,
-          capital_cost = annuity(25, 0.07)*57000*(1+0.011))
+          capital_cost = capital_cost_h2_tank)
 #Add the link "H2 Electrolysis" that transport energy from the electricity bus (bus0) to the H2 bus (bus1)
 #with 80% efficiency
 network.add("Link",
@@ -203,8 +226,8 @@ network.add("Link",
           bus0 = "electricity bus",
           bus1 = "H2",
           p_nom_extendable = True,
-          efficiency = 0.8,
-          capital_cost = annuity(25, 0.07)*600000*(1+0.05))
+          efficiency = tech_data["hydrogen_electrolysis"]["efficiency"],
+          capital_cost = capital_cost_h2_electrolysis)
 
 #Add the link "H2 Fuel Cell" that transports energy from the H2 bus (bus0) to the electricity bus (bus1)
 #with 58% efficiency
@@ -213,8 +236,8 @@ network.add("Link",
           bus0 = "H2",
           bus1 = "electricity bus",
           p_nom_extendable = True,
-          efficiency = 0.58,
-          capital_cost = annuity(10, 0.07)*1300000*(1+0.05))    
+          efficiency = tech_data["hydrogen_fuel_cell"]["efficiency"],
+          capital_cost = capital_cost_h2_fuel_cell)    
 
 # %%
 network.optimize(solver_name='gurobi')
@@ -280,7 +303,11 @@ for gen in vre_generators:
     total_available += available_sum
     total_dispatched += dispatched.sum()
     
-    print(f"{gen}: {curtailed_sum:,.0f} MWh curtailed ({(curtailed_sum/available_sum)*100:.2f}% of available)")
+    if available_sum > 0:
+        curtailed_pct = (curtailed_sum / available_sum) * 100
+        print(f"{gen}: {curtailed_sum:,.0f} MWh curtailed ({curtailed_pct:.2f}% of available)")
+    else:
+        print(f"{gen}: {curtailed_sum:,.0f} MWh curtailed (n/a: no available generation)")
 
 total_curtailed = total_available - total_dispatched
 print(f"\nTotal VRE Curtailment: {total_curtailed:,.0f} MWh ({(total_curtailed/total_available)*100:.2f}%)")
