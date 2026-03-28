@@ -5,8 +5,8 @@ from data.data import tech_data
 from utils import (
     annuity,
     plot_dispatch_week,
-    plot_electricity_mix,
-    plot_duration_curves,
+    plot_dispatch_weeks_side_by_side,
+    plot_mix_and_duration_side_by_side,
     calculate_capacity_factors,
 )
 
@@ -148,19 +148,15 @@ print("\nAnnual capacity factors [-]:")
 print(capacity_factors)
 
 # %%
-# Representative winter and summer weeks for 2015.
-plot_dispatch_week(
+
+# Plot both winter and summer weeks side by side
+plot_dispatch_weeks_side_by_side(
     network,
-    week_start="2015-01-12 00:00:00",
-    title="Winter Dispatch (Week of 12 Jan 2015)",
+    week1_start="2015-01-12 00:00:00",
+    week2_start="2015-07-13 00:00:00",
+    title1="Winter Dispatch (Week of 12 Jan 2015)",
+    title2="Summer Dispatch (Week of 13 Jul 2015)"
 )
 
-plot_dispatch_week(
-    network,
-    week_start="2015-07-13 00:00:00",
-    title="Summer Dispatch (Week of 13 Jul 2015)",
-)
-
-plot_electricity_mix(network)
-plot_duration_curves(network)
+plot_mix_and_duration_side_by_side(network)
 # %%
