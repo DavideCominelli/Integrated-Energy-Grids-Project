@@ -1,6 +1,6 @@
 import plotly.graph_objs as go
 import pandas as pd
-
+from plotly.subplots import make_subplots
 def annuity(n,r):
     """ Calculate the annuity factor for an asset with lifetime n years and
     discount rate  r """
@@ -88,7 +88,7 @@ def plot_electricity_mix(network):
             )
         ]
     )
-    fig.update_layout(title_text="Annual Electricity Mix (MWh)", title_y=0.95)
+    #fig.write_image("electricity_mix.pdf", scale=2)  # Save the figure as a high-resolution PNG
     fig.show()
 
 def plot_duration_curves(network):
@@ -468,4 +468,165 @@ def plot_results(network):
         ),
         margin=dict(l=0, r=0, t=30, b=0)
     )
+    fig.show()
+
+
+def plot_dispatch_weeks_side_by_side(network, week1_start, week2_start, title1, title2):
+    """Plot two weeks' dispatch side by side as subplots (1 row, 2 columns)."""
+    week1_start = pd.Timestamp(week1_start)
+    week2_start = pd.Timestamp(week2_start)
+    if getattr(week1_start, "tz", None) is not None:
+        week1_start = week1_start.tz_convert(None)
+    if getattr(week2_start, "tz", None) is not None:
+        week2_start = week2_start.tz_convert(None)
+    week1_end = week1_start + pd.Timedelta(days=7)
+    week2_end = week2_start + pd.Timedelta(days=7)
+
+    dispatch = _get_generator_dispatch(network)
+    demand = network.loads_t.p["load"]
+
+    color_map = {
+        "onshorewind": "#1f77b4",
+        "solar": "#ff7f0e",
+        "solar_rooftop": "#f2c14e",
+        "run_of_river": "#2a9d8f",
+        "hydro_reservoir": "#264653",
+        "OCGT": "#8c564b",
+    }
+
+    fig = make_subplots(rows=2, cols=1, subplot_titles=(title1, title2), shared_yaxes=True)
+
+    # Week 1
+    dispatch1 = dispatch.loc[week1_start:week1_end - pd.Timedelta(hours=1)]
+    demand1 = demand.loc[week1_start:week1_end - pd.Timedelta(hours=1)]
+    for generator in dispatch1.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=dispatch1.index,
+                y=dispatch1[generator],
+                mode="lines",
+                name=generator if generator else "",
+                stackgroup="generation1",
+                line=dict(width=0.5, color=color_map.get(generator, None)),
+                showlegend=(generator not in fig['data']),
+            ),
+            row=1, col=1
+        )
+    fig.add_trace(
+        go.Scatter(
+            x=demand1.index,
+            y=demand1,
+            mode="lines",
+            name="demand",
+            line=dict(color="black", width=2),
+            showlegend=False,
+        ),
+        row=1, col=1
+    )
+
+    # Week 2
+    dispatch2 = dispatch.loc[week2_start:week2_end - pd.Timedelta(hours=1)]
+    demand2 = demand.loc[week2_start:week2_end - pd.Timedelta(hours=1)]
+    for generator in dispatch2.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=dispatch2.index,
+                y=dispatch2[generator],
+                mode="lines",
+                name=generator if generator else "",
+                stackgroup="generation2",
+                line=dict(width=0.5, color=color_map.get(generator, None)),
+                showlegend=False,
+            ),
+            row=2, col=1
+        )
+    fig.add_trace(
+        go.Scatter(
+            x=demand2.index,
+            y=demand2,
+            mode="lines",
+            name="demand",
+            line=dict(color="black", width=2),
+            showlegend=False,
+        ),
+        row=2, col=1
+    )
+
+    fig.update_layout(
+        xaxis_title="Time",
+        yaxis_title="Power (MW)",
+        legend=dict(bgcolor="rgba(0,0,0,0)", borderwidth=0),
+        margin=dict(l=10, r=10, t=50, b=10),
+        width=800,
+        height=600
+    )
+    
+    fig.write_image("dispatch_comparison.pdf")
+    fig.show()
+
+def plot_mix_and_duration_side_by_side(network):
+    """Plot electricity mix (pie) and duration curves side by side, duration curve 2/3 width, shared legend."""
+    from plotly.subplots import make_subplots
+    dispatch = _get_generator_dispatch(network)
+    annual_energy = dispatch.sum()
+    labels = annual_energy.index.tolist()
+    values = annual_energy.values.tolist()
+
+    # Consistent color map
+    color_map = {
+        "onshorewind": "#1f77b4",
+        "solar": "#ff7f0e",
+        "solar_rooftop": "#f2c14e",
+        "run_of_river": "#2a9d8f",
+        "hydro_reservoir": "#264653",
+        "OCGT": "#8c564b",
+    }
+
+    # Create subplots with width ratios
+    fig = make_subplots(
+        rows=1, cols=2,
+        column_widths=[1/3, 2/3],
+        specs=[[{"type": "domain"}, {"type": "xy"}]],
+        subplot_titles=["Annual Electricity Mix", "Generator Duration Curves"]
+    )
+
+    # Pie chart (left) with consistent colors, no legend
+    pie_colors = [color_map.get(label, None) for label in labels]
+    fig.add_trace(
+        go.Pie(
+            labels=labels,
+            values=values,
+            textinfo="label+percent",
+            hole=0.35,
+            marker=dict(colors=pie_colors),
+            showlegend=False
+        ),
+        row=1, col=1
+    )
+
+    # Duration curves (right), legend only once per technology
+    for i, generator in enumerate(dispatch.columns):
+        sorted_dispatch = dispatch[generator].sort_values(ascending=False).reset_index(drop=True)
+        fig.add_trace(
+            go.Scatter(
+                x=sorted_dispatch.index + 1,
+                y=sorted_dispatch,
+                mode="lines",
+                name=generator,
+                line=dict(color=color_map.get(generator, None)),
+                showlegend=True
+            ),
+            row=1, col=2
+        )
+
+    fig.update_xaxes(title_text="Hours (sorted)", row=1, col=2)
+    fig.update_yaxes(title_text="Dispatch (MW)", row=1, col=2)
+    fig.update_layout(
+        legend=dict(bgcolor="rgba(0,0,0,0)", borderwidth=0, x=1.05, y=1),
+        margin=dict(l=10, r=10, t=50, b=10),
+        width=1100,
+        height=500,
+    )
+    fig.write_image("mix_duration_curves.pdf")
+
     fig.show()
