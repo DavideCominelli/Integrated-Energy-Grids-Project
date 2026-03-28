@@ -142,19 +142,22 @@ capital_cost_pumped_hydro_power = (
     * tech_data["Pumped_Hydro"]["overnight_cost_power"]
     * (1 + tech_data["Pumped_Hydro"]["capital_cost_increase"])
 )
-capital_cost_pumped_hydro_energy = (
-    annuity(tech_data["Pumped_Hydro"]["lifetime"], 0.07)
-    * tech_data["Pumped_Hydro"]["overnight_cost_energy"]
-    * (1 + tech_data["Pumped_Hydro"]["capital_cost_increase"])
-)
+pumped_hydro_max_power = tech_data["Pumped_Hydro"]["max_power_capacity"]
+pumped_hydro_max_energy = tech_data["Pumped_Hydro"]["max_energy_capacity"]
+if pumped_hydro_max_power <= 0:
+    raise ValueError("Pumped_Hydro max_power_capacity must be > 0")
 
-total_capital_cost_pumped_hydro = capital_cost_pumped_hydro_power + capital_cost_pumped_hydro_energy * tech_data["Pumped_Hydro"]["max_hours"]
+# New data provides absolute power and energy limits. Convert to equivalent storage duration.
+pumped_hydro_max_hours = pumped_hydro_max_energy / pumped_hydro_max_power
+
+total_capital_cost_pumped_hydro = capital_cost_pumped_hydro_power
 network.add("StorageUnit", 
             "Pumped_Hydro", 
             bus="electricity bus", 
             p_nom_extendable=True,   
+            p_nom_max=pumped_hydro_max_power,
             capital_cost= total_capital_cost_pumped_hydro, 
-            max_hours=tech_data["Pumped_Hydro"]["max_hours"],             
+            max_hours=pumped_hydro_max_hours,
             efficiency_store=tech_data["Pumped_Hydro"]["efficiency_store"],     
             efficiency_dispatch=tech_data["Pumped_Hydro"]["efficiency_dispatch"],  
             cyclic_state_of_charge=True,
@@ -174,13 +177,14 @@ capital_cost_battery_energy = (
     * (1 + tech_data["battery"]["capital_cost_increase"])
 )
 
-total_capital_cost_battery = capital_cost_battery_power + capital_cost_battery_energy * tech_data["battery"]["max_hours"]
+battery_max_hours = tech_data["battery"].get("max_hours", 4)
+total_capital_cost_battery = capital_cost_battery_power + capital_cost_battery_energy * battery_max_hours
 network.add("StorageUnit", 
             "battery", 
             bus="electricity bus", 
             p_nom_extendable=True,   
             capital_cost= total_capital_cost_battery, 
-            max_hours=tech_data["battery"]["max_hours"],             
+            max_hours=battery_max_hours,
             efficiency_store=tech_data["battery"]["efficiency_store"],     
             efficiency_dispatch=tech_data["battery"]["efficiency_dispatch"],  
             cyclic_state_of_charge=True, 
@@ -299,7 +303,11 @@ for gen in vre_generators:
     total_available += available_sum
     total_dispatched += dispatched.sum()
     
-    print(f"{gen}: {curtailed_sum:,.0f} MWh curtailed ({(curtailed_sum/available_sum)*100:.2f}% of available)")
+    if available_sum > 0:
+        curtailed_pct = (curtailed_sum / available_sum) * 100
+        print(f"{gen}: {curtailed_sum:,.0f} MWh curtailed ({curtailed_pct:.2f}% of available)")
+    else:
+        print(f"{gen}: {curtailed_sum:,.0f} MWh curtailed (n/a: no available generation)")
 
 total_curtailed = total_available - total_dispatched
 print(f"\nTotal VRE Curtailment: {total_curtailed:,.0f} MWh ({(total_curtailed/total_available)*100:.2f}%)")
