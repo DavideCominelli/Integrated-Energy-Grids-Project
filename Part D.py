@@ -133,15 +133,11 @@ capital_cost_pumped_hydro_power = (
     * tech_data["Pumped_Hydro"]["overnight_cost_power"]
     * (1 + tech_data["Pumped_Hydro"]["capital_cost_increase"])
 )
-capital_cost_pumped_hydro_energy = (
-    annuity(tech_data["Pumped_Hydro"]["lifetime"], 0.07)
-    * tech_data["Pumped_Hydro"]["overnight_cost_energy"]
-    * (1 + tech_data["Pumped_Hydro"]["capital_cost_increase"])
-)
-total_capital_cost_pumped_hydro = (
-    capital_cost_pumped_hydro_power
-    + capital_cost_pumped_hydro_energy * tech_data["Pumped_Hydro"]["max_hours"]
-)
+#capital_cost_pumped_hydro_energy = (
+ #   annuity(tech_data["Pumped_Hydro"]["lifetime"], 0.07)
+  #  * tech_data["Pumped_Hydro"]["overnight_cost_energy"]
+   # * (1 + tech_data["Pumped_Hydro"]["capital_cost_increase"])
+#)
 
 capital_cost_battery_power = (
     annuity(tech_data["battery"]["lifetime"], 0.07)
@@ -153,14 +149,37 @@ capital_cost_battery_energy = (
     * tech_data["battery"]["overnight_cost_energy"]
     * (1 + tech_data["battery"]["capital_cost_increase"])
 )
-total_capital_cost_battery = (
-    capital_cost_battery_power
-    + capital_cost_battery_energy * tech_data["battery"]["max_hours"]
+battery_max_hours = tech_data["battery"].get("max_hours", 4)
+total_capital_cost_battery = capital_cost_battery_power + capital_cost_battery_energy * battery_max_hours
+
+
+capital_cost_h2_tank = (
+    annuity(tech_data["hydrogen_storage"]["lifetime"], 0.07)
+    * tech_data["hydrogen_storage"]["overnight_cost_energy"]
+    * (1 + tech_data["hydrogen_storage"]["capital_cost_increase"])
 )
 
-capital_cost_h2_tank = annuity(25, 0.07) * 57000 * (1 + 0.011)
-capital_cost_h2_electrolyser = annuity(25, 0.07) * 600000 * (1 + 0.05)
-capital_cost_h2_fuel_cell = annuity(10, 0.07) * 1300000 * (1 + 0.05)
+capital_cost_h2_electrolysis = (
+    annuity(tech_data["hydrogen_electrolysis"]["lifetime"], 0.07)
+    * tech_data["hydrogen_electrolysis"]["overnight_cost_power"]
+    * (1 + tech_data["hydrogen_electrolysis"]["capital_cost_increase"])
+)
+
+capital_cost_h2_fuel_cell = (
+    annuity(tech_data["hydrogen_fuel_cell"]["lifetime"], 0.07)
+    * tech_data["hydrogen_fuel_cell"]["overnight_cost_power"]
+    * (1 + tech_data["hydrogen_fuel_cell"]["capital_cost_increase"])
+)
+pumped_hydro_max_power = tech_data["Pumped_Hydro"]["max_power_capacity"]
+pumped_hydro_max_energy = tech_data["Pumped_Hydro"]["max_energy_capacity"]
+if pumped_hydro_max_power <= 0:
+    raise ValueError("Pumped_Hydro max_power_capacity must be > 0")
+
+# New data provides absolute power and energy limits. Convert to equivalent storage duration.
+pumped_hydro_max_hours = pumped_hydro_max_energy / pumped_hydro_max_power
+total_capital_cost_pumped_hydro = capital_cost_pumped_hydro_power
+
+
 
 #%% 7) Add all country systems (all technologies in loop)
 for c in COUNTRIES:
@@ -244,8 +263,9 @@ for c in COUNTRIES:
         f"Pumped_Hydro_{c}",
         bus=f"{c} bus",
         p_nom_extendable=True,
+        p_nom_max=pumped_hydro_max_power,
         capital_cost=total_capital_cost_pumped_hydro,
-        max_hours=tech_data["Pumped_Hydro"]["max_hours"],
+        max_hours=pumped_hydro_max_hours,
         efficiency_store=tech_data["Pumped_Hydro"]["efficiency_store"],
         efficiency_dispatch=tech_data["Pumped_Hydro"]["efficiency_dispatch"],
         cyclic_state_of_charge=True,
@@ -259,7 +279,7 @@ for c in COUNTRIES:
         bus=f"{c} bus",
         p_nom_extendable=True,
         capital_cost=total_capital_cost_battery,
-        max_hours=tech_data["battery"]["max_hours"],
+        max_hours=battery_max_hours,
         efficiency_store=tech_data["battery"]["efficiency_store"],
         efficiency_dispatch=tech_data["battery"]["efficiency_dispatch"],
         cyclic_state_of_charge=True,
@@ -284,8 +304,8 @@ for c in COUNTRIES:
         bus0=f"{c} bus",
         bus1=h2_bus,
         p_nom_extendable=True,
-        efficiency=0.8,
-        capital_cost=capital_cost_h2_electrolyser,
+        efficiency=tech_data["hydrogen_electrolysis"]["efficiency"],
+        capital_cost=capital_cost_h2_electrolysis,
     )
 
     network.add(
@@ -294,7 +314,7 @@ for c in COUNTRIES:
         bus0=h2_bus,
         bus1=f"{c} bus",
         p_nom_extendable=True,
-        efficiency=0.58,
+        efficiency=tech_data["hydrogen_fuel_cell"]["efficiency"],
         capital_cost=capital_cost_h2_fuel_cell,
     )
 
@@ -502,34 +522,7 @@ total_cost_interconnected = network.objective
 print(f"\n=== Total System Cost (Interconnected) ===")
 print(f"Total Cost: € {total_cost_interconnected:,.0f}")
 
-#%% 17) Extract Information for Task (e) - Manual PTDF Calculation
-print("\n=== Data Extraction for Task (e) ===")
 
-# 1. Get the first time step
-t0 = network.snapshots[0]
-print(f"First time step: {t0}")
-
-# 2. Network Topology (to build Incidence Matrix K and Reactance Matrix X)
-print("\n--- Network Topology (Lines and Reactances) ---")
-line_info = network.lines[['bus0', 'bus1', 'x']]
-print(line_info.to_string())
-
-print("\n--- List of Buses (Nodes) ---")
-print(list(network.buses.index))
-
-# 3. Nodal Imbalances (Generation - Demand) for the first time step
-# PyPSA stores the net active power injection at each bus in network.buses_t.p
-print(f"\n--- Nodal Imbalances (Net Injection) at {t0} [MW] ---")
-imbalances = network.buses_t.p.loc[t0]
-print(imbalances.round(2).to_string())
-
-# Note: The sum of these imbalances should be very close to 0 (accounting for minor numerical losses/rounding)
-print(f"Sum of imbalances: {imbalances.sum():.4f} MW")
-
-# 4. Modelled Line Flows (to check your manual math at the end)
-print(f"\n--- PyPSA Modelled Line Flows at {t0} [MW] ---")
-modelled_flows = network.lines_t.p0.loc[t0]
-print(modelled_flows.round(2).to_string())
 # %%
 # Mean electricity price per node
 print(network.buses_t.marginal_price.mean())
@@ -747,3 +740,50 @@ def print_storage_totals(network, countries):
 
 # after network.optimize(...)
 print_storage_totals(network, COUNTRIES)
+
+# %%
+# ...existing code...
+print("\n=== StorageUnits p_nom_opt [MW] ===")
+print(network.storage_units[["p_nom_opt", "max_hours"]].round(3))
+
+print("\n=== H2 Stores e_nom_opt [MWh] ===")
+print(network.stores[["e_nom_opt"]].round(3))
+
+print("\n=== H2 Links p_nom_opt [MW] ===")
+print(network.links.loc[
+    network.links.index.str.contains("H2_Electrolysis|H2_Fuel_Cell"),
+    ["p_nom_opt"]
+].round(3))
+
+print("\n=== Mean nodal prices [€/MWh] ===")
+print(network.buses_t.marginal_price.mean().round(2))
+# ...existing code...
+# %%
+#%% 17) Extract Information for Task (e) - Manual PTDF Calculation
+print("\n=== Data Extraction for Task (e) ===")
+
+# 1. Get the first time step
+t0 = network.snapshots[0]
+print(f"First time step: {t0}")
+
+# 2. Network Topology (to build Incidence Matrix K and Reactance Matrix X)
+print("\n--- Network Topology (Lines and Reactances) ---")
+line_info = network.lines[['bus0', 'bus1', 'x']]
+print(line_info.to_string())
+
+print("\n--- List of Buses (Nodes) ---")
+print(list(network.buses.index))
+
+# 3. Nodal Imbalances (Generation - Demand) for the first time step
+# PyPSA stores the net active power injection at each bus in network.buses_t.p
+print(f"\n--- Nodal Imbalances (Net Injection) at {t0} [MW] ---")
+imbalances = network.buses_t.p.loc[t0]
+print(imbalances.round(2).to_string())
+
+# Note: The sum of these imbalances should be very close to 0 (accounting for minor numerical losses/rounding)
+print(f"Sum of imbalances: {imbalances.sum():.4f} MW")
+
+# 4. Modelled Line Flows (to check your manual math at the end)
+print(f"\n--- PyPSA Modelled Line Flows at {t0} [MW] ---")
+modelled_flows = network.lines_t.p0.loc[t0]
+print(modelled_flows.round(2).to_string())
