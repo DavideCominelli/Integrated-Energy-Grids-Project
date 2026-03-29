@@ -494,7 +494,7 @@ def plot_dispatch_weeks_side_by_side(network, week1_start, week2_start, title1, 
         "OCGT": "#8c564b",
     }
 
-    fig = make_subplots(rows=2, cols=1, subplot_titles=(title1, title2), shared_yaxes=True)
+    fig = make_subplots(rows=2, cols=1, subplot_titles=(title1, title2), shared_yaxes=True, vertical_spacing=0.1)
 
     # Week 1
     dispatch1 = dispatch.loc[week1_start:week1_end - pd.Timedelta(hours=1)]
@@ -553,14 +553,14 @@ def plot_dispatch_weeks_side_by_side(network, week1_start, week2_start, title1, 
     )
 
     fig.update_layout(
-        xaxis_title="Time",
-        yaxis_title="Power (MW)",
-        legend=dict(bgcolor="rgba(0,0,0,0)", borderwidth=0),
+        legend=dict(x=1.05, y=1.2,xanchor="right", yanchor="top",bgcolor="rgba(0,0,0,0)", borderwidth=0),
         margin=dict(l=10, r=10, t=50, b=10),
-        width=800,
+        width=900,
         height=600
     )
-    
+    fig.update_xaxes(title_text="Time", row=2, col=1)
+    fig.update_yaxes(title_text="Power (MW)", row=1, col=1)
+    fig.update_yaxes(title_text="Power (MW)", row=2, col=1)
     fig.write_image("dispatch_comparison.pdf")
     fig.show()
 
