@@ -52,6 +52,7 @@ tech_data = {
         "capital_cost_increase": 0.03,
         "efficiency_store": 0.9,          # charging efficiency  (η_charge)
         "efficiency_dispatch": 0.9,       # discharging efficiency (η_discharge)
+        "max_hours": 6,                   # maximum storage duration (hours)
     },
     "hydrogen_electrolysis": {
         "overnight_cost_power": 350000,   # €/MW 
