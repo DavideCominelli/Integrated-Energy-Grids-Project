@@ -1,3 +1,9 @@
 .venv
 .DS_Store
 __pycache__/
+data/windforecast
+*.lp
+*.csv
+IEG_course_projectNY.ipynb
+#Part B results
+output_b/
