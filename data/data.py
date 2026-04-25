@@ -35,6 +35,16 @@ tech_data = {
         "fuel_cost": 21.6,
         "efficiency": 0.39,
     },
+    "gas_pipeline": {
+        "D": 1,         # m Diameter of the pipeline (average value found in SNAM report)
+        "u": 12,          # m/s Average flow velocity of natural gas in pipelines (range: 10-15 m/s found in different reports)
+        "P": 50 * 100000, # Pa
+        "Z": 0.93,      # Compressibility factor (value for 290K and 50 bar, research gate)   
+        "R": 8.314,       # J/molK
+        "M": 0.016,       # kg/mol
+        "T": 273 + 25,    # K
+        "e": 50,          # GJ/tonne or MJ/kg
+    },
     # ── Storage technologies ───────────────────────────────────────────────
     "Pumped_Hydro":{
         "overnight_cost_power": 0.8e6,  # €/MW https://publications.jrc.ec.europa.eu/repository/bitstream/JRC143929/JRC143929_01.pdf

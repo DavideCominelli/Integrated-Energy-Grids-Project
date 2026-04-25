@@ -1,5 +1,6 @@
 import plotly.graph_objs as go
 import pandas as pd
+import re
 from plotly.subplots import make_subplots
 def annuity(n,r):
     """ Calculate the annuity factor for an asset with lifetime n years and
@@ -630,3 +631,126 @@ def plot_mix_and_duration_side_by_side(network):
     fig.write_image("mix_duration_curves.pdf")
 
     fig.show()
+
+
+
+
+def _transport_summary(flow_ts, snapshot_weights):
+    """
+    Returns (total_mwh, avg_mw, peak_mw) for a DataFrame of flows.
+    Uses absolute values to capture both flow directions.
+    """
+    weighted_abs = flow_ts.abs().mul(snapshot_weights, axis=0)
+    transported_mwh = weighted_abs.sum()
+    avg_mw          = transported_mwh / snapshot_weights.sum()
+    peak_mw         = flow_ts.abs().max()
+    return transported_mwh, avg_mw, peak_mw
+
+
+def _elec_pair(line_name):
+    """
+    Extract sorted country pair from an electricity line name.
+    Works for names like 'DEU-CHE', 'DEU-AUT', etc.
+    """
+    parts = re.findall(r"[A-Z]{3}", line_name)
+    if len(parts) >= 2:
+        return "-".join(sorted(parts[:2]))
+    return line_name
+
+
+def _gas_pair(link_name):
+    """
+    Extract sorted country pair from a gas pipeline link name.
+    Works for names like 'gas pipeline DEU-CHE' and 'gas pipeline CHE-DEU'.
+    Expects exactly two 3-uppercase-letter country codes in the name.
+    """
+    parts = re.findall(r"[A-Z]{3}", link_name)
+    if len(parts) >= 2:
+        return "-".join(sorted(parts[:2]))
+    return link_name
+
+
+def print_transport_flows(network, gas_link_prefix="gas pipeline "):
+    """
+    Print and compare absolute energy flows in the electricity and gas networks.
+
+    Parameters
+    ----------
+    network : pypsa.Network
+    gas_link_prefix : str
+        Prefix used when adding gas pipeline links (default matches part_G naming).
+    """
+    snapshot_weights = network.snapshot_weightings.objective
+
+    # ----------------------------------------------------------------
+    # ELECTRICITY NETWORK
+    # ----------------------------------------------------------------
+    print("\n=== Electricity network transport ===")
+    elec_flows = network.lines_t.p0        # signed MW, shape (T, n_lines)
+
+    elec_mwh, elec_avg, elec_peak = _transport_summary(elec_flows, snapshot_weights)
+
+    elec_report = pd.DataFrame({
+        "pair":            [_elec_pair(n) for n in network.lines.index],
+        "transported_mwh": elec_mwh.values,
+        "avg_mw":          elec_avg.values,
+        "peak_mw":         elec_peak.values,
+    }, index=network.lines.index)
+
+    print(elec_report.sort_values("transported_mwh", ascending=False).round(2).to_string())
+
+    elec_pair = elec_report.groupby("pair").sum(numeric_only=True)
+    print("\n--- Electricity by country pair ---")
+    print(elec_pair.sort_values("transported_mwh", ascending=False).round(2).to_string())
+
+    # ----------------------------------------------------------------
+    # GAS NETWORK
+    # Use all gas pipeline links and report both the per-link absolute
+    # transported energy and the per-country-pair aggregate.
+    # ----------------------------------------------------------------
+    print("\n=== Gas pipeline network transport ===")
+
+    gas_mask = network.links.index.str.startswith(gas_link_prefix)
+
+    if gas_mask.sum() == 0:
+        print(f"  [WARNING] No gas pipeline links found with prefix '{gas_link_prefix}'.")
+        print(f"  Available link names: {list(network.links.index[:10])}")
+        gas_total = 0.0
+    else:
+        gas_flows = network.links_t.p0.loc[:, gas_mask]
+
+        gas_mwh, gas_avg, gas_peak = _transport_summary(gas_flows, snapshot_weights)
+
+        gas_report = pd.DataFrame({
+            "pair":            [_gas_pair(n) for n in gas_flows.columns],
+            "transported_mwh": gas_mwh.values,
+            "avg_mw":          gas_avg.values,
+            "peak_mw":         gas_peak.values,
+        }, index=gas_flows.columns)
+
+        print(gas_report.sort_values("transported_mwh", ascending=False).round(2).to_string())
+
+        gas_pair = gas_report.groupby("pair").sum(numeric_only=True)
+        print("\n--- Gas by country pair ---")
+        print(gas_pair.sort_values("transported_mwh", ascending=False).round(2).to_string())
+        gas_total = float(gas_pair["transported_mwh"].sum())
+
+    # ----------------------------------------------------------------
+    # COMPARISON
+    # ----------------------------------------------------------------
+    elec_total = float(elec_pair["transported_mwh"].sum())
+
+    print("\n=== Total transported energy comparison ===")
+    print(f"  Electricity network : {elec_total:>15,.2f} MWh")
+    print(f"  Gas pipeline network : {gas_total:>15,.2f} MWh")
+
+    if elec_total > gas_total:
+        ratio = elec_total / gas_total if gas_total > 0 else float("inf")
+        print(f"  → Electricity transports MORE energy ({ratio:.1f}x the gas network).")
+    elif gas_total > elec_total:
+        ratio = gas_total / elec_total if elec_total > 0 else float("inf")
+        print(f"  → H2 pipelines transport MORE energy ({ratio:.1f}x the electricity network).")
+    else:
+        print("  → Both networks transport the same amount of energy.")
+
+    return elec_total, gas_total   # return values for further use (e.g. plots)
