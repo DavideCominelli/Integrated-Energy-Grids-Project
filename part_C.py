@@ -21,9 +21,12 @@ hours_in_2015 = pd.date_range('2015-01-01 00:00Z',
 
 network.set_snapshots(hours_in_2015.values)
 
+network.add("Carrier", "AC")
+
 # copper plate model (1 bus bar)
 network.add("Bus",
-            "electricity bus")
+            "electricity bus",
+            carrier="AC")
 
 
 #%% add demand data
@@ -142,25 +145,22 @@ capital_cost_pumped_hydro_power = (
     * tech_data["Pumped_Hydro"]["overnight_cost_power"]
     * (1 + tech_data["Pumped_Hydro"]["capital_cost_increase"])
 )
-capital_cost_pumped_hydro_energy = (
-    annuity(tech_data["Pumped_Hydro"]["lifetime"], 0.07)
-    * tech_data["Pumped_Hydro"]["overnight_cost_energy"]
-    * (1 + tech_data["Pumped_Hydro"]["capital_cost_increase"])
-)
+# New data provides absolute power and energy limits. Convert to equivalent storage duration.
+total_capital_cost_pumped_hydro = capital_cost_pumped_hydro_power
+max_hours_ph = tech_data["Pumped_Hydro"]["max_energy_capacity"] / \
+               tech_data["Pumped_Hydro"]["max_power_capacity"]
 
-total_capital_cost_pumped_hydro = capital_cost_pumped_hydro_power + capital_cost_pumped_hydro_energy * tech_data["Pumped_Hydro"]["max_hours"]
-network.add("StorageUnit", 
-            "Pumped_Hydro", 
-            bus="electricity bus", 
-            p_nom_extendable=True,   
-            capital_cost= total_capital_cost_pumped_hydro, 
-            max_hours=tech_data["Pumped_Hydro"]["max_hours"],             
-            efficiency_store=tech_data["Pumped_Hydro"]["efficiency_store"],     
-            efficiency_dispatch=tech_data["Pumped_Hydro"]["efficiency_dispatch"],  
+network.add("StorageUnit",
+            "Pumped_Hydro",
+            bus="electricity bus",
+            p_nom_extendable=True,
+            p_nom_max=tech_data["Pumped_Hydro"]["max_power_capacity"],
+            max_hours=max_hours_ph,                                      
+            capital_cost=total_capital_cost_pumped_hydro,
+            efficiency_store=tech_data["Pumped_Hydro"]["efficiency_store"],
+            efficiency_dispatch=tech_data["Pumped_Hydro"]["efficiency_dispatch"],
             cyclic_state_of_charge=True,
-            inflow=0,                 # closed system (no inflow) (i dont have any time series for inflow, so I set it to 0)
-            p_min_pu=-1              # minimum load of 5% (technical constraint)
-            )
+            inflow=0)
 
 # Li-ion battery storage
 capital_cost_battery_power = (
@@ -174,17 +174,17 @@ capital_cost_battery_energy = (
     * (1 + tech_data["battery"]["capital_cost_increase"])
 )
 
-total_capital_cost_battery = capital_cost_battery_power + capital_cost_battery_energy * tech_data["battery"]["max_hours"]
+total_capital_cost_battery = capital_cost_battery_power + capital_cost_battery_energy*tech_data["battery"]["max_hours"]
 network.add("StorageUnit", 
             "battery", 
             bus="electricity bus", 
             p_nom_extendable=True,   
             capital_cost= total_capital_cost_battery, 
-            max_hours=tech_data["battery"]["max_hours"],             
             efficiency_store=tech_data["battery"]["efficiency_store"],     
             efficiency_dispatch=tech_data["battery"]["efficiency_dispatch"],  
             cyclic_state_of_charge=True, 
-            p_min_pu=-1)
+            max_hours=tech_data["battery"]["max_hours"],
+            )
 
 # Hydrogen storage
 network.add("Bus",
@@ -221,6 +221,7 @@ network.add("Link",
           "H2 Electrolysis",
           bus0 = "electricity bus",
           bus1 = "H2",
+          carrier="H2",
           p_nom_extendable = True,
           efficiency = tech_data["hydrogen_electrolysis"]["efficiency"],
           capital_cost = capital_cost_h2_electrolysis)
@@ -231,6 +232,7 @@ network.add("Link",
           "H2 Fuel Cell",
           bus0 = "H2",
           bus1 = "electricity bus",
+          carrier="H2",
           p_nom_extendable = True,
           efficiency = tech_data["hydrogen_fuel_cell"]["efficiency"],
           capital_cost = capital_cost_h2_fuel_cell)    
@@ -299,7 +301,11 @@ for gen in vre_generators:
     total_available += available_sum
     total_dispatched += dispatched.sum()
     
-    print(f"{gen}: {curtailed_sum:,.0f} MWh curtailed ({(curtailed_sum/available_sum)*100:.2f}% of available)")
+    if available_sum > 0:
+        curtailed_pct = (curtailed_sum / available_sum) * 100
+        print(f"{gen}: {curtailed_sum:,.0f} MWh curtailed ({curtailed_pct:.2f}% of available)")
+    else:
+        print(f"{gen}: {curtailed_sum:,.0f} MWh curtailed (n/a: no available generation)")
 
 total_curtailed = total_available - total_dispatched
 print(f"\nTotal VRE Curtailment: {total_curtailed:,.0f} MWh ({(total_curtailed/total_available)*100:.2f}%)")
