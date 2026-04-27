@@ -148,7 +148,10 @@ costs = costs.value.unstack().fillna(defaults)
 
 
 
-annuity2 = costs.apply(lambda x: annuity(x["discount rate"], x["lifetime"]), axis=1)
+annuity2 = costs.apply(
+    lambda x: annuity(x["lifetime"], x["discount rate"]),  # <- fixed order
+    axis=1
+)
 
 costs["capital_cost"] = (annuity2 + costs["FOM"] / 100) * costs["investment"]
 
@@ -160,10 +163,16 @@ HEAT_HP_COP = costs.at["central air-sourced heat pump", "efficiency"]
 HEAT_HP_CAPITAL_COST = costs.at["central air-sourced heat pump", "capital_cost"]
 
 # choose one storage type:
+#Long-term thermal energy storage
+#there are a few options, either Water tank storage, or molten salt, or solid sensible heat storage through sand, 
+#i choose central water, since it was the cheapest option at 3.1374 €/kWh in 2030, compared with 58 €/kWh for molten salt, and 6.7 €/kWh for solid sensible heat storage through sand.
 HEAT_STORAGE_CAPITAL_COST = costs.at["central water tank storage", "capital_cost"]
-# HEAT_STORAGE_CAPITAL_COST = costs.at["central water pit storage", "capital_cost"]  # cheaper seasonal option
 
-HEAT_STORAGE_EFFICIENCY = 1.0
+HEAT_STORAGE_EFFICIENCY = costs.at["central water tank storage", "efficiency"]
+
+HEAT_STORAGE_MAX_HOURS = costs.at["central water tank storage", "energy to power ratio"]  # ~60.3448 h
+
+HEAT_STORAGE_CAPITAL_COST_P = HEAT_STORAGE_CAPITAL_COST * HEAT_STORAGE_MAX_HOURS
 
 HEAT_GAS_BOILER_EFFICIENCY = costs.at["central gas boiler", "efficiency"]
 HEAT_GAS_BOILER_CAPITAL_COST = costs.at["central gas boiler", "capital_cost"]
@@ -271,21 +280,24 @@ for c in COUNTRIES:
         bus0=f"{c} bus",
         bus1=f"{c} heat bus",
         p_nom_extendable=True,
-        efficiency=HEAT_HP_COP, #most likely is 3, as used in the exercises
+        efficiency=HEAT_HP_COP, 
         capital_cost=HEAT_HP_CAPITAL_COST,
     )
 
 
     # Add heat storage as a Store on the heat bus
     network.add(
-        "Store",
+        "StorageUnit",
         f"heat_storage_{c}",
         bus=f"{c} heat bus",
-        e_nom_extendable=True,
-        e_cyclic=True,
-        capital_cost=HEAT_STORAGE_CAPITAL_COST,
+        capital_cost=HEAT_STORAGE_CAPITAL_COST_P,   
         efficiency_store=HEAT_STORAGE_EFFICIENCY,
         efficiency_dispatch=HEAT_STORAGE_EFFICIENCY,
+        p_min_pu=-1,
+        cyclic_state_of_charge=True,
+        p_nom_extendable=True,
+        max_hours=HEAT_STORAGE_MAX_HOURS,         # <-- set from data
+        standing_loss=0.001, # <-- small standing loss to prevent infinite storage without cost
     )
 
 
@@ -296,10 +308,10 @@ for c in COUNTRIES:
         f"{c} gas boiler",
         bus=f"{c} heat bus",
         carrier="gas",
-        efficiency=HEAT_GAS_BOILER_EFFICIENCY, # assume 90% efficiency for the gas boiler find info on this
-        marginal_cost=fuel_cost/HEAT_GAS_BOILER_EFFICIENCY, # €/MWh_gas / 0.9 efficiency
+        efficiency=HEAT_GAS_BOILER_EFFICIENCY, 
+        marginal_cost=fuel_cost/HEAT_GAS_BOILER_EFFICIENCY, 
         p_nom_extendable=True,
-        capital_cost=HEAT_GAS_BOILER_CAPITAL_COST, #i need to make a annutity for this
+        capital_cost=HEAT_GAS_BOILER_CAPITAL_COST, 
     )
 
 
@@ -432,7 +444,9 @@ for c in COUNTRIES:
     )
 
 #%% 8) Optimise
-network.optimize(solver_name="gurobi", solver_options={"output_flag": 0})
+
+
+network.optimize(solver_name="gurobi", solver_options={"output_flag": 0, "threads": 4})
 
 network.model.to_file("model_I.lp")
 print("Model saved to: model_I.lp")
@@ -994,5 +1008,18 @@ def plot_country_nodes_and_lines_map(network, coords, countries):
 # Use this instead of the storage pie map
 plot_country_nodes_and_lines_map(network, COORDS, COUNTRIES)
 
-# ...existing code...
 # %%
+
+print("\n=== Heat diagnostics ===")
+print("HEAT_HP_COP:", HEAT_HP_COP)
+print("HEAT_HP_CAPITAL_COST [€/MW/a?]:", HEAT_HP_CAPITAL_COST)
+print("HEAT_STORAGE_CAPITAL_COST [€/MWh/a?]:", HEAT_STORAGE_CAPITAL_COST)
+print("HEAT_GAS_BOILER_EFFICIENCY:", HEAT_GAS_BOILER_EFFICIENCY)
+print("fuel_cost used [€/MWh_fuel]:", fuel_cost)
+print("implied gas boiler marginal [€/MWh_heat]:", fuel_cost / HEAT_GAS_BOILER_EFFICIENCY)
+
+print("\nHeat demand stats [assumed MW]:")
+print(df_heat.describe().loc[["mean", "max"]])
+
+
+# %% 
