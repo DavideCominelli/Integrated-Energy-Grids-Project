@@ -1092,3 +1092,4 @@ def print_generator_capex_breakdown(network):
 
 print_generator_capex_breakdown(network)
 
+# %%
