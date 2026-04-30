@@ -26,6 +26,10 @@ from utils import (
 HOME_COUNTRY = "DEU"
 COUNTRIES = ["DEU", "CHE", "CZE", "AUT"]
 
+# NIMBY: set fixed onshore wind capacity for Germany (MW).
+# Set to None to keep onshore wind extendable as before.
+NIMBY_ONSHORE_DEU_CAP_MW = 68000
+
 #we use ntc values for interconnectors
 #it has been refrence in the pypsa tutorial 
 
@@ -193,16 +197,30 @@ for c in COUNTRIES:
     cf_wind = df_wind[c][snapshot_cols].values
     cf_solar = df_solar[c][snapshot_cols].values
 
-    network.add(
-        "Generator",
-        f"onshorewind_{c}",
-        bus=f"{c} bus",
-        p_nom_extendable=True,
-        carrier="onshorewind",
-        capital_cost=capital_cost_onshorewind,
-        marginal_cost=0,
-        p_max_pu=cf_wind,
-    )
+    # If NIMBY fixed capacity is set for Germany, create a fixed (non-extendable) generator
+    if c == "DEU" and NIMBY_ONSHORE_DEU_CAP_MW is not None:
+        network.add(
+            "Generator",
+            f"onshorewind_{c}",
+            bus=f"{c} bus",
+            p_nom=NIMBY_ONSHORE_DEU_CAP_MW,
+            p_nom_extendable=False,
+            carrier="onshorewind",
+            capital_cost=capital_cost_onshorewind,
+            marginal_cost=0,
+            p_max_pu=cf_wind,
+        )
+    else:
+        network.add(
+            "Generator",
+            f"onshorewind_{c}",
+            bus=f"{c} bus",
+            p_nom_extendable=True,
+            carrier="onshorewind",
+            capital_cost=capital_cost_onshorewind,
+            marginal_cost=0,
+            p_max_pu=cf_wind,
+        )
 
     network.add(
         "Generator",
@@ -570,8 +588,14 @@ def plot_storage_all_and_lines_map(network, coords, countries):
             lw = lw_min + (row.s_nom - smin) / (smax - smin) * (lw_max - lw_min)
         else:
             lw = (lw_min + lw_max) / 2
-        ax.plot([x0, x1], [y0, y1], color="gray", linewidth=lw, alpha=0.9,
-            transform=ccrs.PlateCarree(), zorder=2)
+        ax.plot(
+            [x0, x1], [y0, y1],
+            color="gray",
+            linewidth=lw,
+            alpha=0.9,
+            transform=ccrs.PlateCarree(),
+            zorder=2,
+        )
 
     # --- storage values [GWh] ---
     h2, batt, ph, total = {}, {}, {}, {}
@@ -757,7 +781,6 @@ print(network.links.loc[
 
 print("\n=== Mean nodal prices [€/MWh] ===")
 print(network.buses_t.marginal_price.mean().round(2))
-# ...existing code...
 # %%
 #%% 17) Extract Information for Task (e) - Manual PTDF Calculation
 print("\n=== Data Extraction for Task (e) ===")
@@ -968,7 +991,12 @@ print("\n=== Additional useful metrics ===")
 print(m.to_string(float_format=lambda x: f"{x:,.2f}"))
 # ...existing code...
 # %%
-# ...existing code...
+# Quick curtailment check
+vre_gen = [f"onshorewind_{HOME_COUNTRY}", f"solar_{HOME_COUNTRY}", f"solar_rooftop_{HOME_COUNTRY}"]
+available = (network.generators_t.p_max_pu[vre_gen] * network.generators.p_nom_opt[vre_gen]).sum().sum()
+curtailed = available - network.generators_t.p[vre_gen].sum().sum()
+print(f"Curtailment: {curtailed:,.0f} MWh ({curtailed/available*100:.1f}%)")
+# %%
 
 def objective_breakdown(n):
     w = n.snapshot_weightings.objective  # snapshot weights used in objective
@@ -1064,3 +1092,4 @@ def print_generator_capex_breakdown(network):
 
 print_generator_capex_breakdown(network)
 
+# %%
