@@ -118,7 +118,7 @@ snapshot_cols = [h.strftime("%Y-%m-%dT%H:%M:%SZ") for h in network.snapshots]
 #cost model is the same used in exercise 12.02
 
 #source https://github.com/PyPSA/technology-data/tree/v0.11.0
-
+# source https://raw.githubusercontent.com/PyPSA/technology-data/v0.11.0/outputs/costs_2030.csv
 #will be used for heat sector 
 year = 2030
 url = f"https://raw.githubusercontent.com/PyPSA/technology-data/v0.11.0/outputs/costs_{year}.csv"
@@ -770,9 +770,9 @@ def summarize_results(network, countries, home_country):
     elec_demand_twh = network.loads_t.p.sum().sum() / MW_TO_TWh
     print("\n--- Sector coupling ---")
     print(f"Electricity consumed by heat pumps [TWh]: {hp_elec_twh:.2f}")
-    print(f"Electricity demand [TWh]: {elec_demand_twh:.2f}")
+    print(f"Electricity demand and heat [TWh]: {elec_demand_twh:.2f}")
     if elec_demand_twh > 0:
-        print(f"Heat pump electricity as % of electricity demand: {100 * hp_elec_twh / elec_demand_twh:.1f}%")
+        print(f"Heat pump electricity as % of electricity and heat demand: {100 * hp_elec_twh / elec_demand_twh:.1f}%")
 
     # 5) Storage use
     heat_storage_twh = network.storage_units_t.p_dispatch.filter(like="heat_storage").sum().sum() / MW_TO_TWh
@@ -861,5 +861,126 @@ for c in COUNTRIES:
     print(f"Hydro generation [TWh]:   {hydro:.2f}")
     print(f"Heat pumps [TWh]:         {hp_heat:.2f}")
     print(f"Gas boilers [TWh]:        {boiler_heat:.2f}")
-# ...existing code...
+
 #%%
+# Installed capacity [MW]
+solar_mw = network.generators.p_nom_opt[
+    network.generators.index.str.startswith(("solar_", "solar_rooftop_"))
+].sum()
+
+wind_mw = network.generators.p_nom_opt[
+    network.generators.index.str.startswith("onshorewind_")
+].sum()
+
+print(f"Total solar capacity: {solar_mw:,.1f} MW")
+print(f"Total wind capacity:  {wind_mw:,.1f} MW")
+print(f"Solar + wind total:   {solar_mw + wind_mw:,.1f} MW")
+
+
+#%%
+# ...existing code...
+
+# Total installed heat storage
+heat_storage_mask = network.storage_units.index.str.startswith("heat_storage_")
+
+heat_storage_power_mw = network.storage_units.loc[heat_storage_mask, "p_nom_opt"].sum()
+heat_storage_energy_mwh = (
+    network.storage_units.loc[heat_storage_mask, "p_nom_opt"]
+    * network.storage_units.loc[heat_storage_mask, "max_hours"]
+).sum()
+
+print(f"Total heat storage power:  {heat_storage_power_mw:,.1f} MW")
+print(f"Total heat storage energy: {heat_storage_energy_mwh:,.1f} MWh ({heat_storage_energy_mwh/1e3:,.2f} GWh)")
+
+# ...existing code...
+# %%
+# Add this after the summarize_results() call
+
+#%% Heat Balance Plot
+import matplotlib.pyplot as plt
+
+def plot_heat_balance(network, countries, time_slice=None):
+    """
+    Plot stacked area chart of heat supply sources vs heat demand.
+    
+    Parameters:
+    - network: PyPSA Network object
+    - countries: List of country codes
+    - time_slice: Optional time slice (e.g., "2015-01-01":"2015-01-07")
+    """
+    
+    # Aggregate heat supply across all countries
+    heat_pump_supply = -network.links_t.p1.filter(like="heat_pump").sum(axis=1) / 1000  # Convert to GW
+    gas_boiler_supply = network.generators_t.p.filter(like="gas boiler").sum(axis=1) / 1000
+    
+    # Heat storage discharge (positive = discharge to heat bus)
+    heat_storage_discharge = network.storage_units_t.p_dispatch.filter(like="heat_storage").sum(axis=1) / 1000
+    # Only count positive discharge
+    heat_storage_discharge = heat_storage_discharge.clip(lower=0)
+    
+    # Total heat demand across all countries
+    heat_demand = network.loads_t.p.filter(like="heat_load").sum(axis=1) / 1000  # Convert to GW
+    
+    # Apply time slice if provided
+    if time_slice:
+        heat_pump_supply = heat_pump_supply.loc[time_slice]
+        gas_boiler_supply = gas_boiler_supply.loc[time_slice]
+        heat_storage_discharge = heat_storage_discharge.loc[time_slice]
+        heat_demand = heat_demand.loc[time_slice]
+    
+    # Create the stacked area plot
+    fig, ax = plt.subplots(figsize=(14, 6))
+    
+    ax.stackplot(
+        range(len(heat_pump_supply)),
+        heat_pump_supply,
+        gas_boiler_supply,
+        heat_storage_discharge,
+        labels=["Heat Pump", "Gas Boiler", "TES Discharge"],
+        colors=["#FF6B6B", "#FFA500", "#4ECDC4"],
+        alpha=0.8
+    )
+    
+    # Plot heat demand as a line
+    ax.plot(
+        range(len(heat_demand)),
+        heat_demand,
+        color="black",
+        linewidth=2.5,
+        label="Heat Demand",
+        linestyle="--"
+    )
+    
+    ax.set_xlabel("Time", fontsize=12)
+    ax.set_ylabel("Power [GW]", fontsize=12)
+    ax.set_title("Heat Balance: Supply Mix vs Demand", fontsize=14, fontweight="bold")
+    ax.legend(loc="upper left", fontsize=10)
+    ax.grid(True, alpha=0.3)
+    
+    # Format x-axis with time labels
+    if len(heat_demand) <= 168:  # Less than a week
+        step = 24
+    elif len(heat_demand) <= 720:  # Less than a month
+        step = 120
+    else:  # Full year
+        step = 730
+    
+    ax.set_xticks(range(0, len(heat_demand), step))
+    time_labels = [heat_demand.index[i].strftime("%Y-%m-%d") if i < len(heat_demand.index) else "" 
+                   for i in range(0, len(heat_demand), step)]
+    ax.set_xticklabels(time_labels, rotation=45)
+    
+    plt.tight_layout()
+    plt.show()
+
+
+# Call for full year
+plot_heat_balance(network, COUNTRIES)
+
+# Or for a specific week (e.g., winter)
+# plot_heat_balance(network, COUNTRIES, time_slice=slice("2015-01-12", "2015-01-18 23:00"))
+
+# %%
+
+
+# %%
