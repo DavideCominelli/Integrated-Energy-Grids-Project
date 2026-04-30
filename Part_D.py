@@ -884,3 +884,86 @@ plot_country_nodes_and_lines_map(network, COORDS, COUNTRIES)
 
 # ...existing code...
 # %%
+# ...existing code...
+
+def extra_metrics(network, home_country="DEU"):
+    home_bus = f"{home_country} bus"
+    load_name = f"load_{home_country}"
+
+    # Demand
+    deu_demand_mwh = float(network.loads_t.p_set[load_name].sum())
+    total_demand_mwh = float(network.loads_t.p_set.sum().sum())
+
+    # DEU generators and dispatch
+    deu_gen_idx = network.generators.index[network.generators.bus == home_bus]
+    deu_gen_t = network.generators_t.p[deu_gen_idx]
+    deu_gen_total_mwh = float(deu_gen_t.sum().sum())
+
+    # By carrier
+    deu_gens = network.generators.loc[deu_gen_idx]
+    ren_mask = deu_gens.carrier.isin(["onshorewind", "solar", "hydro"])
+    gas_mask = deu_gens.carrier.eq("gas")
+
+    deu_ren_mwh = float(deu_gen_t[deu_gens.index[ren_mask]].sum().sum()) if ren_mask.any() else 0.0
+    deu_gas_mwh = float(deu_gen_t[deu_gens.index[gas_mask]].sum().sum()) if gas_mask.any() else 0.0
+
+    # Curtailment (DEU wind + solar + rooftop solar)
+    vre_units = [f"onshorewind_{home_country}", f"solar_{home_country}", f"solar_rooftop_{home_country}"]
+    vre_units = [g for g in vre_units if g in network.generators.index]
+    if vre_units:
+        available = (network.generators_t.p_max_pu[vre_units] * network.generators.p_nom_opt[vre_units]).sum().sum()
+        dispatched = network.generators_t.p[vre_units].sum().sum()
+        curtailment_pct = float((available - dispatched) / available * 100) if available > 0 else 0.0
+    else:
+        curtailment_pct = 0.0
+
+    # Net imports for DEU (positive = import)
+    net_import_ts = pd.Series(0.0, index=network.snapshots)
+    for line_name, row in network.lines.iterrows():
+        f = network.lines_t.p0[line_name]
+        if row.bus0 == home_bus:
+            net_import_ts += -f
+        elif row.bus1 == home_bus:
+            net_import_ts += f
+    deu_net_import_mwh = float(net_import_ts.sum())
+
+    # Prices
+    deu_price = network.buses_t.marginal_price[home_bus]
+    deu_price_mean = float(deu_price.mean())
+    deu_price_std = float(deu_price.std())
+    deu_price_p95 = float(deu_price.quantile(0.95))
+
+    # Congestion on DEU-connected lines
+    deu_lines = [ln for ln, r in network.lines.iterrows() if (r.bus0 == home_bus or r.bus1 == home_bus)]
+    if deu_lines:
+        loading = network.lines_t.p0[deu_lines].abs().divide(network.lines.loc[deu_lines, "s_nom"], axis=1)
+        deu_congestion_hours = int((loading >= 0.999).sum().sum())
+    else:
+        deu_congestion_hours = 0
+
+    # System cost intensity
+    system_cost_per_mwh = float(network.objective / total_demand_mwh) if total_demand_mwh > 0 else np.nan
+
+    out = pd.Series({
+        "System cost [B€]": network.objective / 1e9,
+        "System cost intensity [€/MWh]": system_cost_per_mwh,
+        "DEU demand [TWh]": deu_demand_mwh / 1e6,
+        "DEU generation [TWh]": deu_gen_total_mwh / 1e6,
+        "DEU renewable generation [TWh]": deu_ren_mwh / 1e6,
+        "DEU gas generation [TWh]": deu_gas_mwh / 1e6,
+        "DEU renewable share of demand [%]": (deu_ren_mwh / deu_demand_mwh * 100) if deu_demand_mwh > 0 else np.nan,
+        "DEU curtailment (wind+solar) [%]": curtailment_pct,
+        "DEU net import [TWh]": deu_net_import_mwh / 1e6,
+        "DEU import dependency [% demand]": (deu_net_import_mwh / deu_demand_mwh * 100) if deu_demand_mwh > 0 else np.nan,
+        "DEU mean price [€/MWh]": deu_price_mean,
+        "DEU price std [€/MWh]": deu_price_std,
+        "DEU price p95 [€/MWh]": deu_price_p95,
+        "DEU-connected congestion hours [h]": deu_congestion_hours,
+    })
+
+    return out
+
+m = extra_metrics(network, HOME_COUNTRY)
+print("\n=== Additional useful metrics ===")
+print(m.to_string(float_format=lambda x: f"{x:,.2f}"))
+# ...existing code...
