@@ -990,3 +990,105 @@ m = extra_metrics(network, HOME_COUNTRY)
 print("\n=== Additional useful metrics ===")
 print(m.to_string(float_format=lambda x: f"{x:,.2f}"))
 # ...existing code...
+# %%
+# Quick curtailment check
+vre_gen = [f"onshorewind_{HOME_COUNTRY}", f"solar_{HOME_COUNTRY}", f"solar_rooftop_{HOME_COUNTRY}"]
+available = (network.generators_t.p_max_pu[vre_gen] * network.generators.p_nom_opt[vre_gen]).sum().sum()
+curtailed = available - network.generators_t.p[vre_gen].sum().sum()
+print(f"Curtailment: {curtailed:,.0f} MWh ({curtailed/available*100:.1f}%)")
+# %%
+
+def objective_breakdown(n):
+    w = n.snapshot_weightings.objective  # snapshot weights used in objective
+
+    # CAPEX (only extendable assets)
+    gen_capex = (n.generators.loc[n.generators.p_nom_extendable, "capital_cost"]
+                 * n.generators.loc[n.generators.p_nom_extendable, "p_nom_opt"]).sum()
+
+    su_capex = (n.storage_units.loc[n.storage_units.p_nom_extendable, "capital_cost"]
+                * n.storage_units.loc[n.storage_units.p_nom_extendable, "p_nom_opt"]).sum()
+
+    link_capex = (n.links.loc[n.links.p_nom_extendable, "capital_cost"]
+                  * n.links.loc[n.links.p_nom_extendable, "p_nom_opt"]).sum()
+
+    store_capex = (n.stores.loc[n.stores.e_nom_extendable, "capital_cost"]
+                   * n.stores.loc[n.stores.e_nom_extendable, "e_nom_opt"]).sum()
+
+    line_capex = 0.0
+    if "s_nom_extendable" in n.lines.columns and n.lines.s_nom_extendable.any():
+        line_capex = (n.lines.loc[n.lines.s_nom_extendable, "capital_cost"]
+                      * n.lines.loc[n.lines.s_nom_extendable, "s_nom_opt"]).sum()
+
+    # OPEX (marginal costs)
+    gen_opex = (
+        n.generators_t.p.mul(w, axis=0)
+        .mul(n.generators.marginal_cost, axis=1)
+        .sum().sum()
+    )
+
+    su_opex = 0.0
+    if (n.storage_units.marginal_cost != 0).any():
+        su_opex = (
+            n.storage_units_t.p.mul(w, axis=0)
+            .mul(n.storage_units.marginal_cost, axis=1)
+            .sum().sum()
+        )
+
+    link_opex = 0.0
+    if (n.links.marginal_cost != 0).any():
+        link_opex = (
+            n.links_t.p0.mul(w, axis=0)
+            .mul(n.links.marginal_cost, axis=1)
+            .sum().sum()
+        )
+
+    parts = pd.Series({
+        "Generator CAPEX": gen_capex,
+        "StorageUnit CAPEX": su_capex,
+        "Link CAPEX": link_capex,
+        "Store CAPEX": store_capex,
+        "Line CAPEX": line_capex,
+        "Generator OPEX": gen_opex,
+        "StorageUnit OPEX": su_opex,
+        "Link OPEX": link_opex,
+    })
+
+    total_from_parts = parts.sum()
+    print("\n=== Objective breakdown [€] ===")
+    print(parts.round(2).to_string())
+    print(f"\nSum of parts: {total_from_parts:,.2f} €")
+    print(f"network.objective: {n.objective:,.2f} €")
+    print(f"Difference: {n.objective - total_from_parts:,.2f} €")
+
+objective_breakdown(network)
+
+# ...existing code...
+# %%
+# ...existing code...
+
+def print_generator_capex_breakdown(network):
+    g = network.generators.copy()
+
+    # Objective-relevant generator CAPEX (capacity decision variables)
+    g["capex_eur"] = 0.0
+    ext = g["p_nom_extendable"].fillna(False)
+    g.loc[ext, "capex_eur"] = g.loc[ext, "capital_cost"] * g.loc[ext, "p_nom_opt"]
+
+    # Helpful columns
+    g["country"] = g["bus"].str.split().str[0]
+    cols = ["bus", "carrier", "p_nom_extendable", "p_nom_opt", "capital_cost", "capex_eur"]
+    g_out = g[cols + ["country"]].sort_values("capex_eur", ascending=False)
+
+    print("\n=== Generator CAPEX by unit [€] ===")
+    print(g_out.round(2).to_string())
+
+    print("\n=== Generator CAPEX by carrier [€] ===")
+    print(g_out.groupby("carrier")["capex_eur"].sum().sort_values(ascending=False).round(2).to_string())
+
+    print("\n=== Generator CAPEX by country [€] ===")
+    print(g_out.groupby("country")["capex_eur"].sum().sort_values(ascending=False).round(2).to_string())
+
+    print(f"\nTotal generator CAPEX (from units): € {g_out['capex_eur'].sum():,.2f}")
+
+print_generator_capex_breakdown(network)
+
