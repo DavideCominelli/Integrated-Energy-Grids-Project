@@ -1,6 +1,7 @@
 #%%
 import pandas as pd
 import pypsa
+import matplotlib.pyplot as plt
 from data.data import tech_data
 from utils import (
     annuity,
@@ -139,6 +140,56 @@ network.model.to_file('model_A.lp')
 print(f"Model saved to: model_A.lp")
 
 # %%
+def plot_cf_representative_weeks(network, winter_start, summer_start):
+    """Plot hourly wind/solar CF and demand for representative winter and summer weeks."""
+    winter_start = pd.Timestamp(winter_start)
+    summer_start = pd.Timestamp(summer_start)
+    winter_end = winter_start + pd.Timedelta(days=7)
+    summer_end = summer_start + pd.Timedelta(days=7)
+
+    cf_wind = network.generators_t.p_max_pu["onshorewind"]
+    cf_solar = network.generators_t.p_max_pu["solar"]
+    demand = network.loads_t.p["load"]
+
+    winter_idx = slice(winter_start, winter_end - pd.Timedelta(hours=1))
+    summer_idx = slice(summer_start, summer_end - pd.Timedelta(hours=1))
+
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
+
+    for ax, idx, title in [
+        (axes[0], winter_idx, "Winter week (high demand, low solar CF)"),
+        (axes[1], summer_idx, "Summer week (lower demand, higher solar CF)"),
+    ]:
+        ax.plot(cf_wind.loc[idx].index, cf_wind.loc[idx].values, label="Wind CF", color="#1f77b4")
+        ax.plot(cf_solar.loc[idx].index, cf_solar.loc[idx].values, label="Solar CF", color="#ff7f0e")
+        ax.set_title(title)
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Capacity factor [-]")
+        ax.set_ylim(0, 1.05)
+
+        ax2 = ax.twinx()
+        ax2.plot(demand.loc[idx].index, demand.loc[idx].values, label="Demand", color="black", alpha=0.35)
+        ax2.set_ylabel("Demand [MW]")
+
+        lines_1, labels_1 = ax.get_legend_handles_labels()
+        lines_2, labels_2 = ax2.get_legend_handles_labels()
+        ax.legend(lines_1 + lines_2, labels_1 + labels_2, loc="upper right")
+
+    plt.tight_layout()
+    plt.show()
+
+    summary = pd.DataFrame(
+        {
+            "Wind CF mean [-]": [cf_wind.loc[winter_idx].mean(), cf_wind.loc[summer_idx].mean()],
+            "Solar CF mean [-]": [cf_solar.loc[winter_idx].mean(), cf_solar.loc[summer_idx].mean()],
+            "Demand mean [MW]": [demand.loc[winter_idx].mean(), demand.loc[summer_idx].mean()],
+        },
+        index=["Winter week", "Summer week"],
+    )
+    print("\nRepresentative-week CF and demand summary:")
+    print(summary.round(3).to_string())
+
+# %%
 optimal_capacities = network.generators.p_nom_opt.sort_values(ascending=False)
 print("\nOptimal capacities [MW]:")
 print(optimal_capacities)
@@ -156,6 +207,12 @@ plot_dispatch_weeks_side_by_side(
     week2_start="2015-07-13 00:00:00",
     title1="Winter Dispatch (Week of 12 Jan 2015)",
     title2="Summer Dispatch (Week of 13 Jul 2015)"
+)
+
+plot_cf_representative_weeks(
+    network,
+    winter_start="2015-01-12 00:00:00",
+    summer_start="2015-07-13 00:00:00",
 )
 
 plot_mix_and_duration_side_by_side(network)
