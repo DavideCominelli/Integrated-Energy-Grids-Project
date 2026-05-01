@@ -47,7 +47,7 @@ tech_data = {
     },
     # ── Storage technologies ───────────────────────────────────────────────
     "Pumped_Hydro":{
-        "overnight_cost_power": 0.8e6,  # €/MW https://publications.jrc.ec.europa.eu/repository/bitstream/JRC143929/JRC143929_01.pdf
+        "overnight_cost_power": 0.8e6,  # €/MW 
         "max_power_capacity": 5900,         # maximum power capacity (MW)
         "max_energy_capacity": 64000,          # maximum energy capacity (MWh)
         "lifetime": 80,
@@ -56,8 +56,8 @@ tech_data = {
         "efficiency_dispatch": 0.87,       # discharging efficiency (η_discharge)
     },
     "battery": {
-        "overnight_cost_power": 80000,   # €/MW https://capstonedc.com/insights/europes-battery-storage-edge/
-        "overnight_cost_energy": 90000,  # €/MWh https://capstonedc.com/insights/europes-battery-storage-edge/
+        "overnight_cost_power": 80000,   # €/MW
+        "overnight_cost_energy": 90000,  # €/MWh 
         "lifetime": 15,
         "capital_cost_increase": 0.03,
         "efficiency_store": 0.9,          # charging efficiency  (η_charge)

@@ -74,7 +74,7 @@ T = gas_pipeline_data["T"]
 e = gas_pipeline_data["e"]
 
 A = np.pi*(D/2)**2
-c_sound = np.sqrt(Z*R*T/M)  # speed of sound in m/s
+c_sound = np.sqrt(Z*R*T/M)  
 rho = P / c_sound**2
 
 # methane pipeline capacity of every corridor [MW_th]
