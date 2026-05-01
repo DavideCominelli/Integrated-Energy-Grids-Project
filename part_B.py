@@ -2,9 +2,11 @@
 from pathlib import Path
 from utils import annuity
 from data.data import tech_data
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import pypsa
 
 # -------------------------------------------------------------------------
@@ -20,11 +22,6 @@ solar_file = "data/pv_optimal.csv"
 OUTPUT_DIR = Path("output_b")
 FIG_DIR = OUTPUT_DIR / "figures"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
-
-# NOTE:
-# This script assumes that the following already exist in previous cells/files:
-# - tech_data
-# - annuity()
 
 
 #%%
@@ -92,9 +89,13 @@ def get_yearly_cf_series(file_path, country, target_year, snapshot_index):
         raise ValueError(f"No data found for year {target_year} in {file_path}")
 
     cf_series = cf_series.sort_index()
-    cf_series.index = cf_series.index.tz_localize(None) if getattr(cf_series.index, "tz", None) is not None else cf_series.index
+
+    if getattr(cf_series.index, "tz", None) is not None:
+        cf_series.index = cf_series.index.tz_localize(None)
+
     snapshot_index = pd.DatetimeIndex(snapshot_index)
-    snapshot_index = snapshot_index.tz_localize(None) if getattr(snapshot_index, "tz", None) is not None else snapshot_index
+    if getattr(snapshot_index, "tz", None) is not None:
+        snapshot_index = snapshot_index.tz_localize(None)
 
     cf_series = cf_series.reindex(snapshot_index)
     cf_series = cf_series.interpolate(method="time").ffill().bfill()
@@ -112,9 +113,13 @@ def build_aligned_demand_series(df_elec, country, demand_year, snapshot_index):
         raise ValueError(f"No demand data found for year {demand_year}")
 
     demand_series = demand_series.sort_index()
-    demand_series.index = demand_series.index.tz_localize(None) if getattr(demand_series.index, "tz", None) is not None else demand_series.index
+
+    if getattr(demand_series.index, "tz", None) is not None:
+        demand_series.index = demand_series.index.tz_localize(None)
+
     snapshot_index = pd.DatetimeIndex(snapshot_index)
-    snapshot_index = snapshot_index.tz_localize(None) if getattr(snapshot_index, "tz", None) is not None else snapshot_index
+    if getattr(snapshot_index, "tz", None) is not None:
+        snapshot_index = snapshot_index.tz_localize(None)
 
     source_year = demand_series.index[0].year
     target_year = snapshot_index[0].year
@@ -345,7 +350,7 @@ def run_weather_variability_analysis(
 def plot_capacity_boxplot(capacities_by_year, save_path):
     """
     Plot installed capacity distribution across weather years as a boxplot.
-    This replaces the original bar chart with error bars.
+    Add a legend so readers can identify median and mean directly.
     """
     fig, ax = plt.subplots(figsize=(11, 6))
 
@@ -354,13 +359,37 @@ def plot_capacity_boxplot(capacities_by_year, save_path):
     ax.boxplot(
         data,
         labels=capacities_by_year.columns,
-        showmeans=True
+        showmeans=True,
+        medianprops=dict(color="orange", linewidth=1.8),
+        meanprops=dict(
+            marker="^",
+            markerfacecolor="tab:green",
+            markeredgecolor="tab:green",
+            markersize=7
+        )
     )
 
     ax.set_xlabel("Generator")
     ax.set_ylabel("Installed capacity [MW]")
     ax.set_title("Installed capacity distribution across weather years")
     plt.xticks(rotation=20)
+
+    # Custom legend for median line and mean triangle
+    legend_handles = [
+        Line2D([0], [0], color="orange", lw=2, label="Median"),
+        Line2D(
+            [0], [0],
+            marker="^",
+            color="tab:green",
+            markerfacecolor="tab:green",
+            markeredgecolor="tab:green",
+            linestyle="None",
+            markersize=8,
+            label="Mean"
+        )
+    ]
+    ax.legend(handles=legend_handles, loc="upper right")
+
     plt.tight_layout()
     plt.savefig(save_path, dpi=200, bbox_inches="tight")
     plt.show()
@@ -460,7 +489,7 @@ if __name__ == "__main__":
     print(capacities_by_year)
 
     # 3) Plot only the required 3 charts
-    # Figure 1: boxplot (replacing the original bar+error plot)
+    # Figure 1: boxplot with legend
     plot_capacity_boxplot(
         capacities_by_year,
         FIG_DIR / "figure1_capacity_boxplot.png"
