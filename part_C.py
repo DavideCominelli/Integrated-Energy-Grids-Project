@@ -260,14 +260,10 @@ print(capacity_factors)
 # Representative winter and summer weeks for 2015.
 plot_dispatch_week_storage(
     network,
-    week_start="2015-01-12 00:00:00",
-    title="Winter Dispatch (Week of 12 Jan 2015)",
-)
-
-plot_dispatch_week_storage(
-    network,
-    week_start="2015-07-13 00:00:00",
-    title="Summer Dispatch (Week of 13 Jul 2015)",
+    week1_start="2015-01-12 00:00:00",
+    week2_start="2015-07-13 00:00:00",
+    title1="Winter Dispatch (Week of 12 Jan 2015)",
+    title2="Summer Dispatch (Week of 13 Jul 2015)",
 )
 
 plot_electricity_mix_storage(network)

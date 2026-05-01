@@ -38,7 +38,7 @@ INTERCONNECTORS_MW = {
     ("CZE", "AUT"): 900,
     ("AUT", "CHE"): 1200,
 }
-
+# %%
 COORDS = {
     "DEU": (10.45, 51.16),
     "CHE": (8.23, 46.82),
@@ -59,6 +59,7 @@ COUNTRY_DISTANCES_KM = {
     for i, c0 in enumerate(COUNTRIES)
     for c1 in COUNTRIES[i + 1 :]
 }
+# %%
 
 gas_pipeline_data = tech_data["gas_pipeline"]
 
@@ -73,8 +74,8 @@ T = gas_pipeline_data["T"]
 e = gas_pipeline_data["e"]
 
 A = np.pi*(D/2)**2
-c=np.sqrt(Z*R*T/M)
-rho = P / c**2
+c_sound = np.sqrt(Z*R*T/M)  # speed of sound in m/s
+rho = P / c_sound**2
 
 # methane pipeline capacity of every corridor [MW_th]
 PIPELINE_CAPACITY_MW = A * u * rho * e
@@ -158,6 +159,24 @@ for (c0, c1), dist_km in COUNTRY_DISTANCES_KM.items():
         p_min_pu=0.0,
         efficiency=eta,
     )
+
+
+Delta_P = (55 - 50) * 100000  # Pa (pressure difference)
+
+# Add linepack storage for each pipeline corridor
+for (c0, c1), dist_km in COUNTRY_DISTANCES_KM.items():
+    # Calculate linepack capacity based on actual pipeline length
+    linepack_capacity = (Delta_P / c_sound**2) * A * dist_km * 1000 * e * 0.000277  # MWh
+    
+    # Add store at the bus0 (starting point) of each pipeline
+    network.add(
+        "Store",
+        f"linepack {c0}-{c1}",
+        bus=f"gas {c0} bus",
+        e_nom=linepack_capacity,
+        e_cyclic=True,
+    )
+    
 
 #%% 5) Load data
 df_elec = pd.read_csv("data/electricity_demand.csv", sep=";", index_col=0)
