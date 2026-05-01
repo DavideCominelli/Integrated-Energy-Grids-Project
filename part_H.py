@@ -2,26 +2,15 @@
 """
 Part H - CO2 price analysis based on the interconnected electricity model from Part D.
 
-Task focus:
-- Use the interconnected four-node electricity model from Part D.
-- Select a decarbonisation target equal to 30% of the unconstrained Part D baseline emissions.
-- Apply a system-wide CO2 price to gas-fired OCGT generation.
-- Use bisection search to find the approximate critical CO2 price.
-- Run a small number of additional trend points for plotting.
-- Save result tables and figures.
-
-Model basis:
-- Countries: DEU, CHE, CZE, AUT
-- HVAC interconnectors with fixed NTC capacities
-- Linearised AC power flow / DC approximation through PyPSA lines
-- No gas pipeline network
-
-Run options:
-- Fast mode:
-    python part_h.py
-
-- Full hourly mode:
-    python part_h.py --full
+Main features of this script:
+- Uses the Part D interconnected four-country electricity model:
+  DEU, CHE, CZE, AUT
+- Defines the decarbonisation target as 30% of baseline emissions
+- Applies a system-wide CO2 price to gas-fired OCGT generation
+- Uses bisection search to find the required CO2 price
+- Evaluates a small number of extra trend points for plotting
+- Restricts plot range to 0-120 EUR/tCO2
+- Places the legend INSIDE the generation-mix figure (top-left, compact, slightly transparent)
 """
 
 from pathlib import Path
@@ -59,8 +48,7 @@ COORDS = {
 DISCOUNT_RATE = 0.07
 TARGET_YEAR = 2015
 
-# Decarbonisation target:
-# 30% of the unconstrained baseline emissions of the Part D interconnected model.
+# Target = 30% of Part D baseline emissions
 TARGET_CAP_FRACTION = 0.30
 
 # Bisection search settings
@@ -69,22 +57,11 @@ PRICE_HIGH = 500.0
 PRICE_TOLERANCE = 1.0
 MAX_ITERATIONS = 20
 
-# Extra trend points for plotting.
-# The final required price found by bisection will be added automatically.
-TREND_PRICE_POINTS = [0, 25, 50, 75, 100, 125, 150, 200, 300, 500]
+# Plot settings
+PLOT_PRICE_MAX = 120.0
 
-parser = argparse.ArgumentParser(
-    description="Part H carbon price analysis based on Part D model"
-)
-parser.add_argument(
-    "-full",
-    action="store_true",
-    help="Run full hourly model. Default is faster downsampled mode.",
-)
-args = parser.parse_args()
-
-FAST_MODE = not args.full
-SNAPSHOT_STRIDE_H = 3 if FAST_MODE else 1
+# Small number of extra trend points for plotting
+TREND_PRICE_POINTS = [0, 25, 50, 75, 100, 110, 120]
 
 SOLVER_OPTIONS = {
     "output_flag": 0,
@@ -94,14 +71,28 @@ SOLVER_OPTIONS = {
 OUTPUT_DIR = Path("output_H")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+parser = argparse.ArgumentParser(
+    description="Part H carbon price analysis based on Part D model"
+)
+parser.add_argument(
+    "--full",
+    action="store_true",
+    help="Run full hourly model. Default is faster 3-hour snapshot mode.",
+)
+args = parser.parse_args()
+
+FAST_MODE = not args.full
+SNAPSHOT_STRIDE_H = 3 if FAST_MODE else 1
+
 
 #%% 2) Helper functions
 
 def align_to_snapshots(series: pd.Series, snapshots) -> pd.Series:
     """
-    Align an input time series to the model snapshots.
-
-    This makes the code work for both full hourly mode and fast downsampled mode.
+    Align a time series to the model snapshots.
+    This allows the same code to work for:
+    - full hourly mode
+    - fast downsampled mode
     """
     snapshot_idx = pd.DatetimeIndex(snapshots)
 
@@ -124,44 +115,40 @@ def build_part_d_network_with_carbon_price(
     co2_price_eur_per_tonne: float,
 ) -> pypsa.Network:
     """
-    Build the interconnected electricity model from Part D.
+    Build the Part D interconnected electricity model and apply a CO2 price.
 
-    CO2 price treatment:
-    - OCGT is modelled as a Generator.
-    - Its normal marginal cost is fuel_cost / efficiency [EUR/MWh_el].
-    - Its emissions intensity is gas_co2_factor / efficiency [tCO2/MWh_el].
-    - Therefore, carbon cost added to OCGT is:
+    CO2 pricing logic:
+    OCGT marginal cost = fuel_cost / efficiency + CO2_price * emission_factor / efficiency
 
-        CO2 price [EUR/tCO2] * gas_co2_factor / efficiency
-
-      giving an additional cost in [EUR/MWh_el].
+    Units:
+    - fuel_cost: EUR/MWh_th
+    - emission_factor: tCO2/MWh_th
+    - OCGT output is electrical MWh_el
     """
     network = pypsa.Network()
 
-    #%% Snapshots
+    # Snapshots
     hours = pd.date_range(
         f"{TARGET_YEAR}-01-01 00:00Z",
         f"{TARGET_YEAR}-12-31 23:00Z",
         freq=f"{SNAPSHOT_STRIDE_H}h",
     )
-
     network.set_snapshots(hours.values)
 
-    # In fast mode, each snapshot represents more than one hour.
-    # This keeps annual energy, emissions and objective values comparable.
+    # If using every 3rd hour, increase weighting so annual totals remain representative
     if SNAPSHOT_STRIDE_H > 1:
         network.snapshot_weightings = network.snapshot_weightings * SNAPSHOT_STRIDE_H
 
-    #%% Carriers
+    # Carriers
     network.add("Carrier", "AC")
-    network.add("Carrier", "gas", co2_emissions=0.19)  # tCO2 / MWh_th
+    network.add("Carrier", "gas", co2_emissions=0.19)   # tCO2 / MWh_th
     network.add("Carrier", "onshorewind")
     network.add("Carrier", "solar")
     network.add("Carrier", "hydro")
     network.add("Carrier", "battery")
     network.add("Carrier", "H2")
 
-    #%% Buses
+    # Electricity buses
     for c in COUNTRIES:
         x, y = COORDS[c]
         network.add(
@@ -173,7 +160,7 @@ def build_part_d_network_with_carbon_price(
             y=y,
         )
 
-    #%% Fixed HVAC interconnectors
+    # Fixed HVAC interconnectors from Part D
     for (c0, c1), cap in INTERCONNECTORS_MW.items():
         network.add(
             "Line",
@@ -186,7 +173,7 @@ def build_part_d_network_with_carbon_price(
             carrier="AC",
         )
 
-    #%% Load data
+    # Load data
     df_elec = pd.read_csv("data/electricity_demand.csv", sep=";", index_col=0)
     df_elec.index = pd.to_datetime(df_elec.index)
 
@@ -196,7 +183,7 @@ def build_part_d_network_with_carbon_price(
     df_solar = pd.read_csv("data/pv_optimal.csv", sep=";", index_col=0)
     df_solar.index = pd.to_datetime(df_solar.index)
 
-    #%% Cost assumptions
+    # Cost assumptions
     capital_cost_onshorewind = (
         annuity(tech_data["onshorewind"]["lifetime"], DISCOUNT_RATE)
         * tech_data["onshorewind"]["overnight_cost"]
@@ -281,7 +268,7 @@ def build_part_d_network_with_carbon_price(
     pumped_hydro_max_hours = pumped_hydro_max_energy / pumped_hydro_max_power
     total_capital_cost_pumped_hydro = capital_cost_pumped_hydro_power
 
-    #%% Add all country systems
+    # Add country systems
     for c in COUNTRIES:
         demand = align_to_snapshots(df_elec[c], network.snapshots)
         cf_wind = align_to_snapshots(df_wind[c], network.snapshots)
@@ -425,13 +412,10 @@ def build_part_d_network_with_carbon_price(
 
 def annual_co2_tonnes(network: pypsa.Network) -> float:
     """
-    Calculate annual CO2 emissions [tCO2/year] from OCGT generators.
+    Annual CO2 emissions [tCO2/year] from gas generators.
 
-    OCGT output is electrical MWh.
-    Thermal input = electrical output / efficiency.
-    CO2 = thermal input * gas CO2 factor.
-
-    Snapshot weightings are included.
+    Formula:
+    CO2 = electricity_generation / efficiency * gas_emission_factor
     """
     gas_gens = network.generators.index[network.generators.carrier == "gas"]
 
@@ -456,8 +440,8 @@ def annual_co2_tonnes(network: pypsa.Network) -> float:
 
 def generation_by_carrier_twh(network: pypsa.Network) -> pd.Series:
     """
-    Aggregate annual electricity generation by carrier [TWh].
-    Includes snapshot weightings.
+    Aggregate annual generation by carrier [TWh].
+    Includes generator output and H2 fuel-cell output.
     """
     weights = network.snapshot_weightings.generators
 
@@ -470,6 +454,7 @@ def generation_by_carrier_twh(network: pypsa.Network) -> pd.Series:
     carrier = network.generators.carrier.reindex(annual_gen_mwh.index)
     annual_by_carrier_mwh = annual_gen_mwh.groupby(carrier).sum()
 
+    # Add H2 fuel cell output
     h2_fc_links = [
         link for link in network.links.index
         if link.startswith("H2_Fuel_Cell_")
@@ -482,14 +467,11 @@ def generation_by_carrier_twh(network: pypsa.Network) -> pd.Series:
             .sum()
             .sum()
         )
-
-        # Avoid very small negative numerical artefacts such as -0.0000.
-        h2_output_mwh = max(0.0, float(h2_output_mwh))
-
+        h2_output_mwh = max(0.0, h2_output_mwh)
         annual_by_carrier_mwh.loc["H2 fuel cell"] = h2_output_mwh
 
-    # Remove tiny numerical noise before converting to TWh.
-    annual_by_carrier_mwh[annual_by_carrier_mwh.abs() < 1e-6] = 0.0
+    # Clean tiny numerical values
+    annual_by_carrier_mwh[np.abs(annual_by_carrier_mwh) < 1e-6] = 0.0
 
     return (annual_by_carrier_mwh / 1e6).sort_values(ascending=False)
 
@@ -497,17 +479,17 @@ def generation_by_carrier_twh(network: pypsa.Network) -> pd.Series:
 def capacity_by_carrier_mw(network: pypsa.Network) -> pd.Series:
     """
     Aggregate installed capacities by carrier [MW].
-    Includes generators and H2 conversion links.
+    Includes generators and H2 links.
     """
     result = {}
 
     gen_caps = network.generators.p_nom_opt.groupby(network.generators.carrier).sum()
 
     for carrier, value in gen_caps.items():
-        result[carrier] = result.get(carrier, 0.0) + value
+        result[carrier] = result.get(carrier, 0.0) + float(value)
 
     for link_name, row in network.links.iterrows():
-        p_nom_opt = row.get("p_nom_opt", 0.0)
+        p_nom_opt = float(row.get("p_nom_opt", 0.0))
 
         if link_name.startswith("H2_Electrolysis_"):
             result["H2 electrolysis"] = result.get("H2 electrolysis", 0.0) + p_nom_opt
@@ -515,26 +497,22 @@ def capacity_by_carrier_mw(network: pypsa.Network) -> pd.Series:
         elif link_name.startswith("H2_Fuel_Cell_"):
             result["H2 fuel cell"] = result.get("H2 fuel cell", 0.0) + p_nom_opt
 
-    result_series = pd.Series(result)
-    result_series[result_series.abs() < 1e-6] = 0.0
+    series = pd.Series(result)
+    series[np.abs(series) < 1e-6] = 0.0
 
-    return result_series.sort_values(ascending=False)
+    return series.sort_values(ascending=False)
 
 
 def solve_model_at_price(co2_price: float) -> tuple[pypsa.Network, float, float]:
     """
-    Build and optimise the Part D model at a given CO2 price.
+    Build and optimise the model at a given CO2 price.
 
-    Returns
-    -------
-    network : pypsa.Network
-        Optimised network.
-    emissions_t : float
-        Annual CO2 emissions [tCO2/year].
-    objective_eur : float
-        Objective value [EUR/year].
+    Returns:
+    - network
+    - emissions_t
+    - objective_eur
     """
-    print(f"\nSolving CO2 price = {co2_price:.2f} EUR/tCO2 ...")
+    print(f"\nSolving CO2 price = {co2_price:.4f} EUR/tCO2 ...")
 
     network = build_part_d_network_with_carbon_price(co2_price)
 
@@ -545,7 +523,7 @@ def solve_model_at_price(co2_price: float) -> tuple[pypsa.Network, float, float]
 
     if status != "ok":
         raise RuntimeError(
-            f"Optimisation failed at {co2_price:.2f} EUR/tCO2: {status}, {condition}"
+            f"Optimisation failed at {co2_price:.4f} EUR/tCO2: {status}, {condition}"
         )
 
     emissions_t = annual_co2_tonnes(network)
@@ -569,9 +547,6 @@ def find_required_carbon_price_bisection(
 ) -> dict:
     """
     Find the minimum CO2 price required to reach the target using bisection search.
-
-    Assumption:
-    CO2 emissions generally decrease as CO2 price increases.
     """
     records = []
 
@@ -616,7 +591,7 @@ def find_required_carbon_price_bisection(
         }
     )
 
-    # Automatically expand upper bound if needed
+    # Expand upper bound if needed
     while co2_high > target_co2_t:
         print(
             f"\nUpper bound {price_high:.2f} EUR/tCO2 did not reach the target. "
@@ -628,12 +603,12 @@ def find_required_carbon_price_bisection(
         obj_low = obj_high
         net_low = net_high
 
-        price_high *= 2
+        price_high *= 2.0
 
         if price_high > 10000:
             raise RuntimeError(
                 "Even a very high CO2 price did not reach the target. "
-                "The target may be infeasible with the current technology set."
+                "Target may be infeasible with the current technology set."
             )
 
         net_high, co2_high, obj_high = solve_model_at_price(price_high)
@@ -649,12 +624,13 @@ def find_required_carbon_price_bisection(
             }
         )
 
+    # Current best feasible point
     best_price = price_high
     best_emissions_t = co2_high
     best_objective_eur = obj_high
     best_network = net_high
 
-    # Bisection loop
+    # Bisection
     for iteration in range(max_iterations):
         price_mid = 0.5 * (price_low + price_high)
 
@@ -684,7 +660,7 @@ def find_required_carbon_price_bisection(
 
         print(
             f"  Iteration {iteration + 1}: "
-            f"interval = [{price_low:.2f}, {price_high:.2f}] EUR/tCO2"
+            f"interval = [{price_low:.4f}, {price_high:.4f}] EUR/tCO2"
         )
 
         if interval_width <= tolerance_price:
@@ -750,14 +726,23 @@ print(search_result["message"])
 
 #%% 5) Additional trend points for plots
 
-plot_prices = sorted(set(TREND_PRICE_POINTS + [round(required_price, 2)]))
+plot_prices = [p for p in TREND_PRICE_POINTS if p <= PLOT_PRICE_MAX]
+
+# Add required price automatically if it lies within plot range
+if 0 <= required_price <= PLOT_PRICE_MAX:
+    plot_prices = sorted(set(plot_prices + [round(required_price, 2)]))
+else:
+    print(
+        f"Warning: required price {required_price:.2f} EUR/tCO2 exceeds "
+        f"plot range upper limit {PLOT_PRICE_MAX:.1f} EUR/tCO2."
+    )
 
 trend_records = []
 mix_records = []
 cap_records = []
 
 for price in plot_prices:
-    if abs(price - required_price) <= 1e-9:
+    if abs(price - required_price) <= 1e-6:
         net = required_network
         co2_t = required_emissions_t
         obj_eur = required_objective_eur
@@ -771,7 +756,10 @@ for price in plot_prices:
         net, co2_t, obj_eur = solve_model_at_price(price)
 
     mix_twh = generation_by_carrier_twh(net)
-    mix_share = mix_twh / mix_twh.sum()
+    total_twh = mix_twh.sum()
+    mix_share = mix_twh / total_twh if total_twh > 0 else mix_twh * 0.0
+    mix_share[np.abs(mix_share) < 1e-10] = 0.0
+
     caps_mw = capacity_by_carrier_mw(net)
 
     trend_records.append(
@@ -821,7 +809,6 @@ for price in plot_prices:
         cap_row[f"{carrier}_mw"] = float(caps_mw.get(carrier, 0.0))
 
     cap_records.append(cap_row)
-
 
 trend_df = pd.DataFrame(trend_records).sort_values("co2_price_eur_per_tco2")
 mix_df = pd.DataFrame(mix_records).sort_values("co2_price_eur_per_tco2")
@@ -879,13 +866,21 @@ ax.plot(
     label="Trend points",
 )
 
-ax.scatter(
-    [required_price],
-    [required_emissions_t / 1e6],
-    s=80,
-    zorder=5,
-    label=f"Required price ≈ {required_price:.1f} EUR/tCO2",
-)
+if 0 <= required_price <= PLOT_PRICE_MAX:
+    ax.scatter(
+        [required_price],
+        [required_emissions_t / 1e6],
+        s=80,
+        zorder=5,
+        label=f"Required price ≈ {required_price:.1f} EUR/tCO2",
+    )
+
+    ax.axvline(
+        required_price,
+        color="gray",
+        linestyle=":",
+        linewidth=1,
+    )
 
 ax.axhline(
     target_co2_mt,
@@ -895,18 +890,12 @@ ax.axhline(
     label=f"Target = {target_co2_mt:.2f} MtCO2/year",
 )
 
-ax.axvline(
-    required_price,
-    color="gray",
-    linestyle=":",
-    linewidth=1,
-)
-
+ax.set_xlim(0, PLOT_PRICE_MAX)
 ax.set_xlabel("CO2 price [EUR/tCO2]")
 ax.set_ylabel("Annual CO2 emissions [MtCO2/year]")
 ax.set_title("System CO2 emissions as a function of CO2 price")
 ax.grid(alpha=0.3)
-ax.legend()
+ax.legend(loc="upper right", frameon=True, framealpha=0.95)
 
 plt.tight_layout()
 plt.savefig(
@@ -920,6 +909,8 @@ plt.show()
 #%% 8) Plot generation mix vs carbon price
 
 plot_df = mix_df.copy()
+plot_df = plot_df[plot_df["co2_price_eur_per_tco2"] <= PLOT_PRICE_MAX].copy()
+
 x = plot_df["co2_price_eur_per_tco2"].values
 
 stack_carriers = [
@@ -943,22 +934,35 @@ fig, ax = plt.subplots(figsize=(10, 6))
 
 ax.stackplot(x, shares, labels=labels, alpha=0.9)
 
-ax.axvline(
-    required_price,
-    color="gray",
-    linestyle=":",
-    linewidth=1,
-    label=f"Required price ≈ {required_price:.1f} EUR/tCO2",
-)
+if 0 <= required_price <= PLOT_PRICE_MAX:
+    ax.axvline(
+        required_price,
+        color="gray",
+        linestyle=":",
+        linewidth=1,
+        label=f"Required price ≈ {required_price:.1f} EUR/tCO2",
+    )
 
+ax.set_xlim(0, PLOT_PRICE_MAX)
+ax.set_ylim(0, 1.0)
 ax.set_xlabel("CO2 price [EUR/tCO2]")
 ax.set_ylabel("Generation share [-]")
 ax.set_title("Generation mix sensitivity to CO2 price")
-ax.set_ylim(0, 1.0)
 ax.grid(alpha=0.2)
 
-# Put legend outside the figure area to avoid covering the plot.
-ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5))
+# Legend INSIDE the figure: top-left, compact, slightly transparent
+ax.legend(
+    loc="upper left",
+    bbox_to_anchor=(0.01, 0.99),
+    frameon=True,
+    framealpha=0.78,
+    fontsize=9,
+    borderpad=0.3,
+    labelspacing=0.25,
+    handlelength=1.4,
+    handletextpad=0.5,
+    borderaxespad=0.3,
+)
 
 plt.tight_layout()
 plt.savefig(
@@ -986,6 +990,7 @@ with open(result_txt, "w", encoding="utf-8") as f:
     f.write(f"Realized emissions at required price [MtCO2/year]: {required_emissions_t / 1e6:.3f}\n")
     f.write(f"Objective at required price [billion EUR]: {required_objective_eur / 1e9:.3f}\n")
     f.write(f"Bisection tolerance [EUR/tCO2]: {PRICE_TOLERANCE:.2f}\n")
+    f.write(f"Plot price max [EUR/tCO2]: {PLOT_PRICE_MAX:.1f}\n")
 
 print("\nSaved outputs in:", OUTPUT_DIR)
 print("Result text file:", result_txt)
